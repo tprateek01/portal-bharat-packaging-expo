@@ -9,22 +9,46 @@
 <body>
 
 <div class="login-shell">
-  <div class="login-card">
-    <h1>Bharat Packaging Expo</h1>
-    <p class="sub">Sign in to the admin portal</p>
+  <div class="login-split">
 
-    <form id="loginForm">
-      <div class="field">
-        <label for="username">Username</label>
-        <input type="text" id="username" name="username" autocomplete="username" required />
+    <div class="login-brand-panel">
+      <div class="login-brand-inner">
+        <img
+          class="login-logo"
+          src="/images/bharat-packaging-expo-logo@2x.png"
+          srcset="/images/bharat-packaging-expo-logo.png 300w, /images/bharat-packaging-expo-logo@2x.png 600w"
+          sizes="220px"
+          alt="Bharat Packaging Expo — 30th Aug to 02nd Sept 2027, India Expo Centre &amp; Mart, Greater Noida"
+        />
+        <div class="login-brand-tag">PACKAGING · SUSTAINABILITY · INNOVATION</div>
+        <div class="login-brand-dates">30 Aug – 02 Sept 2027 &nbsp;·&nbsp; India Expo Centre &amp; Mart, Greater Noida</div>
       </div>
-      <div class="field">
-        <label for="password">Password</label>
-        <input type="password" id="password" name="password" autocomplete="current-password" required />
+    </div>
+
+    <div class="login-form-panel">
+      <div class="login-card">
+        <h1>Welcome to the Bharat Packaging Expo Admin Portal</h1>
+        <p class="sub">Your control center for visitors, exhibitors &amp; bookings.</p>
+
+        <h2 class="signin-heading">Sign In</h2>
+
+        <form id="loginForm">
+          <div class="field">
+            <label for="username">Username</label>
+            <input type="text" id="username" name="username" autocomplete="username" required />
+          </div>
+          <div class="field">
+            <label for="password">Password</label>
+            <input type="password" id="password" name="password" autocomplete="current-password" required />
+          </div>
+          <button type="submit" class="primary-btn">Sign In</button>
+          <div id="formMsg" class="form-msg"></div>
+        </form>
+
+        <div class="login-footer-note">© Copyright Bharat Packaging Expo 2026–27</div>
       </div>
-      <button type="submit" class="primary-btn">Sign In</button>
-      <div id="formMsg" class="form-msg"></div>
-    </form>
+    </div>
+
   </div>
 </div>
 

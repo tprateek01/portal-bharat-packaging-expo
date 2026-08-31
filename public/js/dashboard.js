@@ -20,6 +20,7 @@
   const PAGE_SIZE = 20;
   let filterValues = {}; // { search: "", <filterKey>: "" }
   let debounceTimer = null;
+  let expandedGroups = {}; // { "Visitors": true }
 
   const navList = document.getElementById("navList");
   const pageTitle = document.getElementById("pageTitle");
@@ -57,34 +58,84 @@
   });
 
   // ---- Sidebar ----
+  // Top-level entries (Visitors, Exhibitor EOI, Exhibitor Booking, …) all
+  // render with identical styling. Any entry backed by a "group" of types
+  // (e.g. Visitors -> Buyers/Delegates) becomes a toggle button with a
+  // chevron that expands to reveal its nested items.
   function renderNav() {
     navList.innerHTML = "";
-    let lastGroup = undefined;
 
+    // Walk TYPES once, grouping consecutive same-group entries while
+    // preserving overall order (so groups can sit anywhere in the list).
+    const sections = [];
+    const seenGroups = new Set();
     TYPES.forEach((t) => {
-      if (t.group && t.group !== lastGroup) {
-        const heading = document.createElement("div");
-        heading.className = "nav-group-heading";
-        heading.textContent = t.group;
-        navList.appendChild(heading);
+      if (t.group) {
+        if (!seenGroups.has(t.group)) {
+          seenGroups.add(t.group);
+          sections.push({ kind: "group", name: t.group, items: TYPES.filter((x) => x.group === t.group) });
+        }
+      } else {
+        sections.push({ kind: "item", item: t });
       }
-      lastGroup = t.group || undefined;
-
-      const btn = document.createElement("button");
-      btn.className = "nav-item" + (t.group ? " nested" : "") + (t.key === currentType ? " active" : "");
-      btn.textContent = t.label;
-      btn.addEventListener("click", () => {
-        currentType = t.key;
-        currentStatus = "All";
-        currentPage = 1;
-        filterValues = {};
-        renderNav();
-        renderStatusTabs();
-        renderFilterBar();
-        loadRecords();
-      });
-      navList.appendChild(btn);
     });
+
+    sections.forEach((section) => {
+      if (section.kind === "item") {
+        navList.appendChild(buildNavButton(section.item, false));
+        return;
+      }
+
+      const { name, items } = section;
+      const hasActiveChild = items.some((it) => it.key === currentType);
+      // Default a group open the first time it's rendered if it contains
+      // the current page; afterwards, respect whatever the user toggled.
+      if (!(name in expandedGroups)) expandedGroups[name] = hasActiveChild;
+      const isOpen = expandedGroups[name];
+
+      const groupBtn = document.createElement("button");
+      groupBtn.className = "nav-item nav-group-toggle" + (hasActiveChild ? " active" : "");
+      groupBtn.setAttribute("aria-expanded", String(isOpen));
+
+      const labelSpan = document.createElement("span");
+      labelSpan.textContent = name;
+      groupBtn.appendChild(labelSpan);
+
+      const chevron = document.createElement("span");
+      chevron.className = "nav-chevron" + (isOpen ? " open" : "");
+      chevron.textContent = "▾";
+      groupBtn.appendChild(chevron);
+
+      groupBtn.addEventListener("click", () => {
+        expandedGroups[name] = !expandedGroups[name];
+        renderNav();
+      });
+      navList.appendChild(groupBtn);
+
+      if (isOpen) {
+        const sub = document.createElement("div");
+        sub.className = "nav-subgroup";
+        items.forEach((t) => sub.appendChild(buildNavButton(t, true)));
+        navList.appendChild(sub);
+      }
+    });
+  }
+
+  function buildNavButton(t, nested) {
+    const btn = document.createElement("button");
+    btn.className = "nav-item" + (nested ? " nested" : "") + (t.key === currentType ? " active" : "");
+    btn.textContent = t.label;
+    btn.addEventListener("click", () => {
+      currentType = t.key;
+      currentStatus = "All";
+      currentPage = 1;
+      filterValues = {};
+      renderNav();
+      renderStatusTabs();
+      renderFilterBar();
+      loadRecords();
+    });
+    return btn;
   }
 
   // ---- Status tabs ----

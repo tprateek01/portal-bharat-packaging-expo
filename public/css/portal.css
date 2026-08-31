@@ -23,30 +23,121 @@ body {
 }
 
 /* ---------- Login page ---------- */
+:root {
+  --brand-purple: #6f4e9e;
+  --brand-purple-dark: #4f3373;
+  --brand-teal: #1fa199;
+  --brand-gold: #c9a15a;
+}
 .login-shell {
   min-height: 100vh;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 20px;
+  padding: 24px;
+}
+.login-split {
+  width: 100%;
+  max-width: 980px;
+  min-height: 560px;
+  background: #fff;
+  border-radius: 16px;
+  overflow: hidden;
+  display: flex;
+  box-shadow: 0 20px 60px rgba(30, 20, 50, 0.14);
+}
+
+/* Left branded panel — gradient pulled from the event logo's own
+   purple / teal / gold palette, with a soft dot pattern for texture. */
+.login-brand-panel {
+  flex: 1 1 42%;
+  min-width: 280px;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 32px;
+  background:
+    radial-gradient(circle at 15% 20%, rgba(255,255,255,0.14) 0, transparent 45%),
+    radial-gradient(circle at 85% 85%, rgba(255,255,255,0.10) 0, transparent 50%),
+    linear-gradient(155deg, var(--brand-purple-dark) 0%, var(--brand-purple) 45%, var(--brand-teal) 100%);
+}
+.login-brand-panel::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  opacity: 0.5;
+  background-image: radial-gradient(rgba(255,255,255,0.16) 1.5px, transparent 1.5px);
+  background-size: 22px 22px;
+  pointer-events: none;
+}
+.login-brand-inner {
+  position: relative;
+  text-align: center;
+  max-width: 320px;
+}
+.login-logo {
+  width: 190px;
+  height: 190px;
+  object-fit: contain;
+  border-radius: 20px;
+  background: #fff;
+  padding: 16px;
+  box-shadow: 0 12px 34px rgba(20, 10, 35, 0.28);
+}
+.login-brand-tag {
+  margin-top: 26px;
+  color: #fff;
+  font-weight: 700;
+  font-size: 0.78rem;
+  letter-spacing: 0.12em;
+  opacity: 0.92;
+}
+.login-brand-dates {
+  margin-top: 10px;
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+/* Right form panel */
+.login-form-panel {
+  flex: 1 1 58%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 32px;
 }
 .login-card {
   width: 100%;
   max-width: 380px;
-  background: #fff;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 32px;
-  box-shadow: 0 4px 24px rgba(20, 20, 30, 0.06);
 }
 .login-card h1 {
-  font-size: 1.3rem;
-  margin: 0 0 4px;
+  font-size: 1.35rem;
+  line-height: 1.3;
+  margin: 0 0 8px;
+  color: var(--brand-purple-dark);
 }
 .login-card p.sub {
   color: var(--muted);
-  margin: 0 0 24px;
+  margin: 0 0 22px;
   font-size: 0.9rem;
+}
+.signin-heading {
+  font-size: 1.05rem;
+  margin: 0 0 16px;
+}
+.login-footer-note {
+  margin-top: 22px;
+  color: var(--muted);
+  font-size: 0.76rem;
+  text-align: center;
+}
+
+@media (max-width: 760px) {
+  .login-split { flex-direction: column; min-height: 0; }
+  .login-brand-panel { padding: 32px 24px; }
+  .login-logo { width: 140px; height: 140px; }
 }
 .field { margin-bottom: 16px; }
 .field label {
@@ -127,13 +218,24 @@ button.primary-btn:disabled { opacity: 0.6; cursor: not-allowed; }
 .sidebar .nav-item:hover { background: var(--bg); }
 .sidebar .nav-item.active { background: var(--error-bg); color: var(--accent); }
 .sidebar .nav-item.nested { padding-left: 26px; font-weight: 500; font-size: 0.86rem; }
-.sidebar .nav-group-heading {
-  padding: 14px 12px 4px;
-  font-size: 0.72rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+
+/* Group toggle (e.g. "Visitors") — same base look as a normal nav item,
+   just with a chevron pushed to the right that rotates on expand. */
+.sidebar .nav-group-toggle { justify-content: space-between; }
+.sidebar .nav-chevron {
+  font-size: 0.7rem;
   color: var(--muted);
+  transition: transform 0.15s ease;
+  transform: rotate(-90deg); /* collapsed: pointing right */
+}
+.sidebar .nav-chevron.open { transform: rotate(0deg); } /* expanded: pointing down */
+.sidebar .nav-group-toggle.active .nav-chevron { color: var(--accent); }
+
+.sidebar .nav-subgroup {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 4px;
 }
 .sidebar .logout-btn {
   margin-top: auto;
