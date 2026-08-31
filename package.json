@@ -1,0 +1,17 @@
+{
+  "name": "bharat-expo-portal",
+  "version": "1.0.0",
+  "description": "Admin portal for Bharat Packaging Expo registrations (reads the same Neon database as the public registration site).",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "migrate": "node migrations/run-migration.js"
+  },
+  "dependencies": {
+    "cookie-parser": "^1.4.6",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "jsonwebtoken": "^9.0.2",
+    "pg": "^8.11.5"
+  }
+}

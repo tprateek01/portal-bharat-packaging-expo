@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Admin Portal — Bharat Packaging Expo</title>
+<link rel="stylesheet" href="/css/portal.css" />
+</head>
+<body>
+
+<div class="app-shell">
+  <aside class="sidebar">
+    <div class="brand">Bharat Packaging Expo</div>
+    <div class="brand-sub">Admin Portal</div>
+    <nav id="navList"></nav>
+    <button class="logout-btn" id="logoutBtn">Log out</button>
+  </aside>
+
+  <main class="main">
+    <div class="main-header">
+      <h1 id="pageTitle">Loading…</h1>
+      <button class="export-btn" id="exportBtn">⬇ Export Data</button>
+    </div>
+
+    <div class="status-tabs" id="statusTabs"></div>
+
+    <div class="filter-bar" id="filterBar"></div>
+
+    <div class="table-wrap">
+      <div id="tableArea"><div class="loading-state">Loading records…</div></div>
+      <div class="table-footer">
+        <span id="resultCount"></span>
+        <div class="pager">
+          <button id="prevPage">‹ Prev</button>
+          <span id="pageIndicator">Page 1</span>
+          <button id="nextPage">Next ›</button>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<div class="modal-backdrop" id="modalBackdrop">
+  <div class="modal-card">
+    <h2>Record Details</h2>
+    <div id="modalBody"></div>
+    <button class="modal-close" id="modalClose">Close</button>
+  </div>
+</div>
+
+<script src="/js/dashboard.js"></script>
+</body>
+</html>
