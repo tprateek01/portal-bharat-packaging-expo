@@ -216,7 +216,21 @@ button.primary-btn:disabled { opacity: 0.6; cursor: not-allowed; }
   width: 100%;
 }
 .sidebar .nav-item:hover { background: var(--bg); }
-.sidebar .nav-item.active { background: var(--error-bg); color: var(--accent); }
+.sidebar .nav-item.active {
+  background: var(--error-bg);
+  color: var(--accent);
+  position: relative;
+}
+.sidebar .nav-item.active::before {
+  content: "";
+  position: absolute;
+  left: -14px;
+  top: 6px;
+  bottom: 6px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--accent);
+}
 .sidebar .nav-item.nested { padding-left: 26px; font-weight: 500; font-size: 0.86rem; }
 
 /* Group toggle (e.g. "Visitors") — same base look as a normal nav item,
@@ -335,23 +349,25 @@ table.data-table tr:last-child td { border-bottom: none; }
 .status-pill.Rejected { background: var(--error-bg); color: var(--error); }
 .status-pill.Inactive { background: #eceef1; color: var(--muted); }
 
-.row-actions { display: flex; gap: 6px; }
+.row-actions { display: flex; align-items: center; gap: 10px; }
 .row-actions button {
-  border: 1px solid var(--border);
-  background: #fff;
-  border-radius: 6px;
-  width: 30px;
-  height: 30px;
+  border: none;
+  background: none;
+  padding: 2px;
   cursor: pointer;
-  font-size: 0.9rem;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  border-radius: 4px;
+  transition: opacity 0.12s ease, transform 0.12s ease;
 }
-.row-actions button.approve:hover { border-color: var(--success); color: var(--success); }
-.row-actions button.reject:hover { border-color: var(--error); color: var(--error); }
-.row-actions button.delete:hover { border-color: var(--error); color: var(--error); }
-.row-actions button.view:hover { border-color: var(--ink); }
+.row-actions button:hover { transform: scale(1.12); }
+.row-actions button:active { transform: scale(0.96); }
+.row-actions button.view { color: var(--ink); }
+.row-actions button.approve { color: var(--success); }
+.row-actions button.reject { color: var(--warn); }
+.row-actions button.inactive { color: var(--muted); }
+.row-actions button.delete { color: var(--error); }
 
 .table-footer {
   display: flex;

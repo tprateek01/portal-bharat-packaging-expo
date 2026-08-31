@@ -241,14 +241,16 @@
 
       const thead = document.createElement("thead");
       const headRow = document.createElement("tr");
+      // Actions leads the row (matches reference layout), then Status,
+      // then the type's own data columns.
+      ["Actions", "Status"].forEach((label) => {
+        const th = document.createElement("th");
+        th.textContent = label;
+        headRow.appendChild(th);
+      });
       cfg.columns.forEach((col) => {
         const th = document.createElement("th");
         th.textContent = col.label;
-        headRow.appendChild(th);
-      });
-      ["Status", "Actions"].forEach((label) => {
-        const th = document.createElement("th");
-        th.textContent = label;
         headRow.appendChild(th);
       });
       thead.appendChild(headRow);
@@ -257,11 +259,10 @@
       const tbody = document.createElement("tbody");
       rows.forEach((row) => {
         const tr = document.createElement("tr");
-        cfg.columns.forEach((col) => {
-          const td = document.createElement("td");
-          td.textContent = formatValue(row[col.key], col.type);
-          tr.appendChild(td);
-        });
+
+        const actionsTd = document.createElement("td");
+        actionsTd.appendChild(buildRowActions(cfg, row));
+        tr.appendChild(actionsTd);
 
         const statusTd = document.createElement("td");
         const pill = document.createElement("span");
@@ -270,9 +271,11 @@
         statusTd.appendChild(pill);
         tr.appendChild(statusTd);
 
-        const actionsTd = document.createElement("td");
-        actionsTd.appendChild(buildRowActions(cfg, row));
-        tr.appendChild(actionsTd);
+        cfg.columns.forEach((col) => {
+          const td = document.createElement("td");
+          td.textContent = formatValue(row[col.key], col.type);
+          tr.appendChild(td);
+        });
 
         tbody.appendChild(tr);
       });
@@ -303,6 +306,16 @@
     };
   }
 
+  // Small inline stroke icons (flat, single-color, no boxed buttons) —
+  // matches the reference layout's icon-row style rather than bordered buttons.
+  const ICONS = {
+    view: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>',
+    approve: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>',
+    reject: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m15 9-6 6M9 9l6 6"/></svg>',
+    inactive: '<svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>',
+    delete: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>',
+  };
+
   function buildRowActions(cfg, row) {
     const wrap = document.createElement("div");
     wrap.className = "row-actions";
@@ -310,34 +323,35 @@
     const viewBtn = document.createElement("button");
     viewBtn.className = "view";
     viewBtn.title = "View details";
-    viewBtn.textContent = "👁";
+    viewBtn.innerHTML = ICONS.view;
     viewBtn.addEventListener("click", () => openModal(cfg, row));
     wrap.appendChild(viewBtn);
 
     const approveBtn = document.createElement("button");
     approveBtn.className = "approve";
     approveBtn.title = "Approve";
-    approveBtn.textContent = "✓";
+    approveBtn.innerHTML = ICONS.approve;
     approveBtn.addEventListener("click", () => updateStatus(row.id, "Approved"));
     wrap.appendChild(approveBtn);
 
     const rejectBtn = document.createElement("button");
     rejectBtn.className = "reject";
     rejectBtn.title = "Reject";
-    rejectBtn.textContent = "✕";
+    rejectBtn.innerHTML = ICONS.reject;
     rejectBtn.addEventListener("click", () => updateStatus(row.id, "Rejected"));
     wrap.appendChild(rejectBtn);
 
     const inactiveBtn = document.createElement("button");
+    inactiveBtn.className = "inactive";
     inactiveBtn.title = "Mark inactive";
-    inactiveBtn.textContent = "⏸";
+    inactiveBtn.innerHTML = ICONS.inactive;
     inactiveBtn.addEventListener("click", () => updateStatus(row.id, "Inactive"));
     wrap.appendChild(inactiveBtn);
 
     const deleteBtn = document.createElement("button");
     deleteBtn.className = "delete";
     deleteBtn.title = "Delete";
-    deleteBtn.textContent = "🗑";
+    deleteBtn.innerHTML = ICONS.delete;
     deleteBtn.addEventListener("click", () => deleteRecord(row.id));
     wrap.appendChild(deleteBtn);
 

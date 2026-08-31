@@ -327,6 +327,13 @@ app.get("/api/health", async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`Bharat Packaging Expo admin portal running at http://localhost:${PORT}`);
-});
+// Vercel invokes this file as a serverless function and imports `app`
+// directly — it never runs `node server.js`, so app.listen() must only
+// fire for local/traditional hosting (`npm start`), not on import.
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`Bharat Packaging Expo admin portal running at http://localhost:${PORT}`);
+  });
+}
+
+module.exports = app;
