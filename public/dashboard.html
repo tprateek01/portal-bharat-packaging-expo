@@ -10,8 +10,22 @@
 
 <div class="app-shell">
   <aside class="sidebar">
-    <div class="brand">Bharat Packaging Expo</div>
-    <div class="brand-sub">Admin Portal</div>
+    <div class="brand-row">
+      <img class="brand-logo" src="/images/bharat-packaging-expo-logo@2x.png" alt="Bharat Packaging Expo" />
+    </div>
+
+    <div class="event-card">
+      <div class="event-card-title">Bharat Packaging<br />Expo 2027</div>
+      <div class="event-card-row">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+        <span>30 Aug – 02 Sept 2027</span>
+      </div>
+      <div class="event-card-row">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>
+        <span>India Expo Centre &amp; Mart, Greater Noida</span>
+      </div>
+    </div>
+
     <nav id="navList"></nav>
     <button class="logout-btn" id="logoutBtn">Log out</button>
   </aside>
@@ -25,6 +39,8 @@
     <div class="status-tabs" id="statusTabs"></div>
 
     <div class="filter-bar" id="filterBar"></div>
+
+    <div class="search-summary" id="searchSummary"></div>
 
     <div class="table-wrap">
       <div id="tableArea"><div class="loading-state">Loading records…</div></div>
@@ -45,6 +61,18 @@
     <h2>Record Details</h2>
     <div id="modalBody"></div>
     <button class="modal-close" id="modalClose">Close</button>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="editModalBackdrop">
+  <div class="modal-card">
+    <h2>Edit Record</h2>
+    <div id="editModalBody"></div>
+    <div class="modal-error" id="editModalError"></div>
+    <div class="modal-actions">
+      <button class="modal-cancel" id="editModalCancel">Cancel</button>
+      <button class="modal-save" id="editModalSave">Save Changes</button>
+    </div>
   </div>
 </div>
 

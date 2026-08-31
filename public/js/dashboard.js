@@ -32,14 +32,29 @@
   const prevPageBtn = document.getElementById("prevPage");
   const nextPageBtn = document.getElementById("nextPage");
   const exportBtn = document.getElementById("exportBtn");
+  const searchSummaryEl = document.getElementById("searchSummary");
   const modalBackdrop = document.getElementById("modalBackdrop");
   const modalBody = document.getElementById("modalBody");
   const modalClose = document.getElementById("modalClose");
+  const editModalBackdrop = document.getElementById("editModalBackdrop");
+  const editModalBody = document.getElementById("editModalBody");
+  const editModalError = document.getElementById("editModalError");
+  const editModalCancel = document.getElementById("editModalCancel");
+  const editModalSave = document.getElementById("editModalSave");
 
   modalClose.addEventListener("click", () => modalBackdrop.classList.remove("open"));
   modalBackdrop.addEventListener("click", (e) => {
     if (e.target === modalBackdrop) modalBackdrop.classList.remove("open");
   });
+  editModalCancel.addEventListener("click", () => closeEditModal());
+  editModalBackdrop.addEventListener("click", (e) => {
+    if (e.target === editModalBackdrop) closeEditModal();
+  });
+  function closeEditModal() {
+    editModalBackdrop.classList.remove("open");
+    editModalError.classList.remove("show");
+    editModalError.textContent = "";
+  }
 
   // ---- Load type/column config from the server ----
   const meta = await fetch("/api/types").then((r) => r.json());
@@ -193,7 +208,77 @@
   }
 
   function prettifyKey(key) {
+    if (key === "search") return "Search";
     return key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+  }
+
+  // ---- Search / filter results summary ("N results found" + chips + Clear) ----
+  function renderSearchSummary(total) {
+    const activeEntries = Object.entries(filterValues).filter(([, v]) => v && String(v).trim());
+
+    if (activeEntries.length === 0) {
+      searchSummaryEl.style.display = "none";
+      searchSummaryEl.innerHTML = "";
+      return;
+    }
+
+    searchSummaryEl.style.display = "flex";
+    searchSummaryEl.innerHTML = "";
+
+    const countEl = document.createElement("div");
+    countEl.className = "search-summary-count";
+    countEl.textContent = `${total} result${total === 1 ? "" : "s"} found`;
+    searchSummaryEl.appendChild(countEl);
+
+    const row = document.createElement("div");
+    row.className = "search-summary-chips-row";
+
+    const chipsWrap = document.createElement("div");
+    chipsWrap.className = "search-summary-chips";
+    activeEntries.forEach(([key, value]) => {
+      const chip = document.createElement("span");
+      chip.className = "filter-chip";
+
+      const labelSpan = document.createElement("span");
+      labelSpan.className = "filter-chip-label";
+      labelSpan.textContent = prettifyKey(key);
+      chip.appendChild(labelSpan);
+
+      const valueSpan = document.createElement("span");
+      valueSpan.className = "filter-chip-value";
+      valueSpan.textContent = value;
+      chip.appendChild(valueSpan);
+
+      const removeBtn = document.createElement("button");
+      removeBtn.className = "filter-chip-remove";
+      removeBtn.type = "button";
+      removeBtn.title = `Remove ${prettifyKey(key)} filter`;
+      removeBtn.textContent = "✕";
+      removeBtn.addEventListener("click", () => {
+        filterValues[key] = "";
+        currentPage = 1;
+        renderFilterBar();
+        loadRecords();
+      });
+      chip.appendChild(removeBtn);
+
+      chipsWrap.appendChild(chip);
+    });
+    row.appendChild(chipsWrap);
+
+    const clearBtn = document.createElement("button");
+    clearBtn.className = "search-summary-clear";
+    clearBtn.type = "button";
+    clearBtn.innerHTML = `${ICONS.delete} Clear`;
+    clearBtn.addEventListener("click", () => {
+      filterValues = {};
+      currentPage = 1;
+      renderFilterBar();
+      loadRecords();
+    });
+    row.appendChild(clearBtn);
+
+    searchSummaryEl.appendChild(row);
   }
 
   // ---- Query params shared by list + export ----
@@ -224,9 +309,11 @@
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Could not load records.");
       renderTable(cfg, data);
+      renderSearchSummary(data.total);
     } catch (err) {
       tableArea.innerHTML = `<div class="empty-state">${escapeHtml(err.message)}</div>`;
       resultCount.textContent = "";
+      searchSummaryEl.style.display = "none";
     }
   }
 
@@ -308,11 +395,12 @@
 
   // Small inline stroke icons (flat, single-color, no boxed buttons) —
   // matches the reference layout's icon-row style rather than bordered buttons.
+  // Row order mirrors the reference: view, edit (pencil), approve, reject, delete.
   const ICONS = {
-    view: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>',
+    view: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7Z"/><circle cx="12" cy="12" r="3"/></svg>',
+    edit: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>',
     approve: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>',
     reject: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m15 9-6 6M9 9l6 6"/></svg>',
-    inactive: '<svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>',
     delete: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>',
   };
 
@@ -327,6 +415,13 @@
     viewBtn.addEventListener("click", () => openModal(cfg, row));
     wrap.appendChild(viewBtn);
 
+    const editBtn = document.createElement("button");
+    editBtn.className = "edit";
+    editBtn.title = "Edit details";
+    editBtn.innerHTML = ICONS.edit;
+    editBtn.addEventListener("click", () => openEditModal(cfg, row));
+    wrap.appendChild(editBtn);
+
     const approveBtn = document.createElement("button");
     approveBtn.className = "approve";
     approveBtn.title = "Approve";
@@ -340,13 +435,6 @@
     rejectBtn.innerHTML = ICONS.reject;
     rejectBtn.addEventListener("click", () => updateStatus(row.id, "Rejected"));
     wrap.appendChild(rejectBtn);
-
-    const inactiveBtn = document.createElement("button");
-    inactiveBtn.className = "inactive";
-    inactiveBtn.title = "Mark inactive";
-    inactiveBtn.innerHTML = ICONS.inactive;
-    inactiveBtn.addEventListener("click", () => updateStatus(row.id, "Inactive"));
-    wrap.appendChild(inactiveBtn);
 
     const deleteBtn = document.createElement("button");
     deleteBtn.className = "delete";
@@ -400,6 +488,81 @@
       modalBody.appendChild(div);
     });
     modalBackdrop.classList.add("open");
+  }
+
+  // ---- Edit modal (pencil action) — lets an admin change any of the
+  // record's own fields, plus its status, and saves via PATCH. ----
+  function openEditModal(cfg, row) {
+    editModalError.classList.remove("show");
+    editModalError.textContent = "";
+    editModalBody.innerHTML = "";
+
+    const inputs = {}; // key -> input/select element
+
+    // Status first, since it's the field admins change most often.
+    const statusField = document.createElement("div");
+    statusField.className = "edit-field status-field";
+    const statusLabel = document.createElement("label");
+    statusLabel.textContent = "Status";
+    const statusSelect = document.createElement("select");
+    STATUSES.forEach((s) => {
+      const opt = document.createElement("option");
+      opt.value = s;
+      opt.textContent = s;
+      if (s === row.status) opt.selected = true;
+      statusSelect.appendChild(opt);
+    });
+    statusField.appendChild(statusLabel);
+    statusField.appendChild(statusSelect);
+    editModalBody.appendChild(statusField);
+    inputs.status = statusSelect;
+
+    cfg.columns.forEach((col) => {
+      const field = document.createElement("div");
+      field.className = "edit-field";
+      const label = document.createElement("label");
+      label.textContent = col.label;
+      field.appendChild(label);
+
+      const input = document.createElement("input");
+      input.type = col.type === "date" ? "text" : "text";
+      input.value = formatValue(row[col.key], col.type);
+      if (col.type === "date") input.disabled = true; // registration date isn't editable
+      field.appendChild(input);
+
+      editModalBody.appendChild(field);
+      inputs[col.key] = input;
+    });
+
+    editModalSave.onclick = async () => {
+      const body = { status: inputs.status.value };
+      cfg.columns.forEach((col) => {
+        if (col.type === "date") return; // read-only, never sent
+        body[col.key] = inputs[col.key].value;
+      });
+
+      editModalSave.disabled = true;
+      editModalSave.textContent = "Saving…";
+      try {
+        const res = await fetch(`/api/records/${currentType}/${row.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Could not save changes.");
+        closeEditModal();
+        loadRecords();
+      } catch (err) {
+        editModalError.textContent = err.message;
+        editModalError.classList.add("show");
+      } finally {
+        editModalSave.disabled = false;
+        editModalSave.textContent = "Save Changes";
+      }
+    };
+
+    editModalBackdrop.classList.add("open");
   }
 
   function formatValue(value, type) {

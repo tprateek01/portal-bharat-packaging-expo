@@ -12,6 +12,11 @@
   --warn: #b7791f;
   --warn-bg: #fbf1de;
   --radius: 10px;
+  /* Brand pink pulled from the Bharat Packaging Expo "EXPO" badge —
+     used for the selected sidebar item and other pink accents. */
+  --brand-pink: #d3004c;
+  --brand-pink-dark: #a3003b;
+  --brand-pink-bg: #fce6ee;
 }
 
 * { box-sizing: border-box; }
@@ -192,12 +197,35 @@ button.primary-btn:disabled { opacity: 0.6; cursor: not-allowed; }
   display: flex;
   flex-direction: column;
 }
-.sidebar .brand {
-  font-weight: 800;
-  font-size: 1.05rem;
-  margin-bottom: 4px;
+.sidebar .brand-row { display: flex; justify-content: center; margin-bottom: 16px; }
+.sidebar .brand-logo { width: 100%; max-width: 160px; height: auto; object-fit: contain; }
+
+/* ---------- Expo info card (top-left, matches reference layout) ---------- */
+.event-card {
+  background: var(--brand-pink-bg);
+  border: 1px solid #f3c9da;
+  border-radius: var(--radius);
+  padding: 12px 12px 14px;
+  margin-bottom: 20px;
 }
-.sidebar .brand-sub { color: var(--muted); font-size: 0.78rem; margin-bottom: 24px; }
+.event-card-title {
+  font-weight: 800;
+  font-size: 0.88rem;
+  line-height: 1.25;
+  color: var(--brand-pink-dark);
+  margin-bottom: 10px;
+}
+.event-card-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 0.74rem;
+  line-height: 1.4;
+  margin-top: 6px;
+}
+.event-card-row svg { flex-shrink: 0; margin-top: 2px; color: var(--brand-pink); }
+
 .sidebar nav { display: flex; flex-direction: column; gap: 4px; }
 .sidebar .nav-item {
   display: flex;
@@ -217,9 +245,10 @@ button.primary-btn:disabled { opacity: 0.6; cursor: not-allowed; }
 }
 .sidebar .nav-item:hover { background: var(--bg); }
 .sidebar .nav-item.active {
-  background: var(--error-bg);
-  color: var(--accent);
+  background: var(--brand-pink);
+  color: #fff;
   position: relative;
+  box-shadow: 0 4px 10px rgba(211, 0, 76, 0.25);
 }
 .sidebar .nav-item.active::before {
   content: "";
@@ -229,7 +258,7 @@ button.primary-btn:disabled { opacity: 0.6; cursor: not-allowed; }
   bottom: 6px;
   width: 3px;
   border-radius: 0 3px 3px 0;
-  background: var(--accent);
+  background: var(--brand-pink-dark);
 }
 .sidebar .nav-item.nested { padding-left: 26px; font-weight: 500; font-size: 0.86rem; }
 
@@ -243,7 +272,8 @@ button.primary-btn:disabled { opacity: 0.6; cursor: not-allowed; }
   transform: rotate(-90deg); /* collapsed: pointing right */
 }
 .sidebar .nav-chevron.open { transform: rotate(0deg); } /* expanded: pointing down */
-.sidebar .nav-group-toggle.active .nav-chevron { color: var(--accent); }
+.sidebar .nav-group-toggle.active { background: var(--brand-pink-bg); color: var(--brand-pink-dark); }
+.sidebar .nav-group-toggle.active .nav-chevron { color: var(--brand-pink-dark); }
 
 .sidebar .nav-subgroup {
   display: flex;
@@ -314,6 +344,63 @@ button.export-btn {
   background: #fff;
 }
 
+/* ---------- Search / filter results summary ---------- */
+.search-summary {
+  display: none;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.search-summary-count {
+  font-size: 0.82rem;
+  color: var(--muted);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.search-summary-chips-row { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.search-summary-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 5px 8px;
+  font-size: 0.78rem;
+}
+.filter-chip-label { color: var(--muted); font-weight: 600; }
+.filter-chip-value { color: var(--ink); font-weight: 600; }
+.filter-chip-remove {
+  border: none;
+  background: var(--bg);
+  color: var(--muted);
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  font-size: 0.68rem;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+.filter-chip-remove:hover { background: var(--error-bg); color: var(--error); }
+.search-summary-clear {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: none;
+  background: none;
+  color: var(--error);
+  font-weight: 700;
+  font-size: 0.78rem;
+  cursor: pointer;
+  padding: 4px 2px;
+}
+.search-summary-clear:hover { text-decoration: underline; }
+
 .table-wrap {
   background: #fff;
   border: 1px solid var(--border);
@@ -363,10 +450,10 @@ table.data-table tr:last-child td { border-bottom: none; }
 }
 .row-actions button:hover { transform: scale(1.12); }
 .row-actions button:active { transform: scale(0.96); }
-.row-actions button.view { color: var(--ink); }
+.row-actions button.view { color: var(--accent); }
+.row-actions button.edit { color: var(--ink); }
 .row-actions button.approve { color: var(--success); }
 .row-actions button.reject { color: var(--warn); }
-.row-actions button.inactive { color: var(--muted); }
 .row-actions button.delete { color: var(--error); }
 
 .table-footer {
@@ -435,6 +522,72 @@ table.data-table tr:last-child td { border-bottom: none; }
   cursor: pointer;
   font-weight: 600;
 }
+
+/* ---------- Edit modal (pencil action) ---------- */
+.edit-field { margin-bottom: 14px; }
+.edit-field label {
+  display: block;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--muted);
+  margin-bottom: 5px;
+}
+.edit-field input,
+.edit-field select {
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 0.88rem;
+  font-family: inherit;
+  background: #fff;
+  color: var(--ink);
+}
+.edit-field input:focus,
+.edit-field select:focus {
+  outline: none;
+  border-color: var(--brand-pink);
+  box-shadow: 0 0 0 3px rgba(211, 0, 76, 0.12);
+}
+.edit-field input:disabled { background: var(--bg); color: var(--muted); }
+.edit-field.status-field select { font-weight: 700; }
+
+.modal-error {
+  display: none;
+  margin-top: 4px;
+  padding: 9px 12px;
+  border-radius: 6px;
+  font-size: 0.82rem;
+  background: var(--error-bg);
+  color: var(--error);
+}
+.modal-error.show { display: block; }
+
+.modal-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 18px;
+}
+.modal-actions button {
+  flex: 1;
+  padding: 10px;
+  border-radius: 6px;
+  font-weight: 700;
+  font-size: 0.88rem;
+  cursor: pointer;
+}
+.modal-cancel {
+  border: 1px solid var(--border);
+  background: #fff;
+  color: var(--ink);
+}
+.modal-save {
+  border: none;
+  background: var(--brand-pink);
+  color: #fff;
+}
+.modal-save:hover { background: var(--brand-pink-dark); }
+.modal-save:disabled { opacity: 0.6; cursor: not-allowed; }
 
 @media (max-width: 800px) {
   .sidebar { display: none; }

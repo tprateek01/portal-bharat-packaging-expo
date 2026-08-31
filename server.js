@@ -279,26 +279,51 @@ app.get("/api/records/:type/export", requireAuth, async (req, res) => {
   }
 });
 
-// PATCH /api/records/:type/:id  { status }
+// PATCH /api/records/:type/:id  { status } and/or { <editable column>: value, ... }
+// Used both by the quick-action buttons (status only) and the pencil/Edit
+// form (any subset of the type's own columns, plus optionally status).
 app.patch("/api/records/:type/:id", requireAuth, async (req, res) => {
   const cfg = getTypeConfig(req.params.type);
   if (!cfg) return res.status(404).json({ error: "Unknown record type." });
 
-  const { status } = req.body || {};
-  if (!STATUSES.includes(status)) {
-    return res.status(400).json({ error: `Status must be one of: ${STATUSES.join(", ")}` });
+  const body = req.body || {};
+  // Whitelist: only columns this type actually declares are editable.
+  // created_at is display-only and never writable from here.
+  const editableColumns = new Set(cfg.columns.map((c) => c.key).filter((k) => k !== "created_at"));
+
+  const setClauses = [];
+  const values = [];
+
+  if (body.status !== undefined) {
+    if (!STATUSES.includes(body.status)) {
+      return res.status(400).json({ error: `Status must be one of: ${STATUSES.join(", ")}` });
+    }
+    values.push(body.status);
+    setClauses.push(`status = $${values.length}`);
   }
+
+  for (const [key, value] of Object.entries(body)) {
+    if (key === "status" || !editableColumns.has(key)) continue;
+    values.push(value === "" ? null : value);
+    setClauses.push(`${key} = $${values.length}`);
+  }
+
+  if (setClauses.length === 0) {
+    return res.status(400).json({ error: "No valid fields to update." });
+  }
+
+  values.push(req.params.id);
 
   try {
     const result = await pool.query(
-      `UPDATE ${cfg.table} SET status = $1 WHERE id = $2 RETURNING *`,
-      [status, req.params.id]
+      `UPDATE ${cfg.table} SET ${setClauses.join(", ")} WHERE id = $${values.length} RETURNING *`,
+      values
     );
     if (result.rowCount === 0) return res.status(404).json({ error: "Record not found." });
     res.json({ success: true, row: result.rows[0] });
   } catch (err) {
     console.error(`update ${cfg.table} failed:`, err.message);
-    res.status(500).json({ error: "Could not update status." });
+    res.status(500).json({ error: "Could not update record." });
   }
 });
 

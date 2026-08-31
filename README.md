@@ -8,10 +8,11 @@ so it lives on its own URL (e.g. `admin.yoursite.com` or
 ## What it does
 
 - Login page (single admin account, via environment variables)
-- Sidebar with three sections: **Visitors**, **Exhibitor EOI**, **Exhibitor Booking**
+- Sidebar with three sections: **Visitors**, **Exhibitor EOI**, **Exhibitor Booking**, topped by an expo details card (dates + venue)
 - Status tabs: All / Registered / Approved / Rejected / Inactive
 - Search + filters (country, state, participation category depending on the table)
-- Per-row actions: view details, approve, reject, mark inactive, delete
+- Per-row actions: view details, **edit (pencil) — edit any field and status**, approve, reject, delete
+- A "results found" summary with removable filter chips + a Clear action whenever search/filters are active
 - **Export Data** button — downloads the current filtered view as CSV
 - Pagination (20 rows per page)
 
@@ -75,6 +76,6 @@ Deploy this folder as its **own** Vercel project (separate from
 - The login session is a signed JWT stored in an httpOnly cookie, so it
   works fine on serverless platforms like Vercel (no server-side session
   store needed).
-- If you want an "Edit" action (not just Approve/Reject/Inactive/Delete),
-  that can be added as a follow-up — right now records are read-only
-  aside from their status.
+- The pencil (Edit) action opens a form for every field on the record,
+  plus its status, and saves via `PATCH /api/records/:type/:id`. The
+  registration date column is shown but left read-only.
