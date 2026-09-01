@@ -11,10 +11,41 @@
     window.location.href = "/login.html";
   });
 
+  // ---- Event branding (name/logo/dates/venue) — same portal, any event ----
+  // Public endpoint, no auth needed — safe to fire alongside the auth guard.
+  fetch("/api/branding")
+    .then((r) => r.json())
+    .then((b) => {
+      document.getElementById("pageTitleTag").textContent = `Admin Portal — ${b.eventName}`;
+      const logo = document.getElementById("brandLogo");
+      logo.src = `/images/${b.logo2x}`;
+      logo.alt = b.eventName;
+      document.getElementById("eventCardTitle").textContent = b.eventName;
+      document.getElementById("eventCardDates").textContent = b.dateRange;
+      document.getElementById("eventCardVenue").textContent = b.venue;
+    })
+    .catch(() => {
+      // Branding is cosmetic only — never block the dashboard on it.
+    });
+
+  // Every authenticated API call goes through this. If the session has
+  // expired mid-use (12h JWT, or the cookie got cleared), the API returns
+  // 401 — instead of that surfacing as a confusing inline error, send the
+  // admin straight back to the login page.
+  async function apiFetch(url, opts) {
+    const res = await fetch(url, opts);
+    if (res.status === 401) {
+      window.location.href = "/login.html";
+      throw new Error("Session expired. Redirecting to sign in…");
+    }
+    return res;
+  }
+
   // ---- State ----
+  const OVERVIEW_KEY = "__overview__";
   let TYPES = [];
   let STATUSES = [];
-  let currentType = null;
+  let currentType = OVERVIEW_KEY; // land on the Overview summary first
   let currentStatus = "All";
   let currentPage = 1;
   const PAGE_SIZE = 20;
@@ -33,6 +64,8 @@
   const nextPageBtn = document.getElementById("nextPage");
   const exportBtn = document.getElementById("exportBtn");
   const searchSummaryEl = document.getElementById("searchSummary");
+  const overviewArea = document.getElementById("overviewArea");
+  const recordsView = document.getElementById("recordsView");
   const modalBackdrop = document.getElementById("modalBackdrop");
   const modalBody = document.getElementById("modalBody");
   const modalClose = document.getElementById("modalClose");
@@ -57,20 +90,132 @@
   }
 
   // ---- Load type/column config from the server ----
-  const meta = await fetch("/api/types").then((r) => r.json());
+  let meta;
+  try {
+    meta = await apiFetch("/api/types").then((r) => r.json());
+  } catch (err) {
+    return; // apiFetch already redirected to /login.html
+  }
   TYPES = meta.types;
   STATUSES = meta.statuses;
-  currentType = TYPES[0].key;
 
   renderNav();
-  renderStatusTabs();
-  renderFilterBar();
-  loadRecords();
+  showOverview();
 
-  exportBtn.addEventListener("click", () => {
+  exportBtn.addEventListener("click", async () => {
     const params = buildQueryParams({ forExport: true });
-    window.location.href = `/api/records/${currentType}/export?${params.toString()}`;
+    exportBtn.disabled = true;
+    const originalLabel = exportBtn.textContent;
+    exportBtn.textContent = "Exporting…";
+    try {
+      const res = await apiFetch(`/api/records/${currentType}/export?${params.toString()}`);
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "Could not export records.");
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${currentType}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      exportBtn.disabled = false;
+      exportBtn.textContent = originalLabel;
+    }
   });
+
+  // ---- View switching: Overview <-> a type's records table ----
+  function showOverview() {
+    currentType = OVERVIEW_KEY;
+    overviewArea.style.display = "block";
+    recordsView.style.display = "none";
+    exportBtn.style.display = "none";
+    pageTitle.textContent = "Overview";
+    loadOverview();
+  }
+
+  function showRecordsView(typeKey) {
+    currentType = typeKey;
+    currentStatus = "All";
+    currentPage = 1;
+    filterValues = {};
+    overviewArea.style.display = "none";
+    recordsView.style.display = "block";
+    exportBtn.style.display = "";
+    renderStatusTabs();
+    renderFilterBar();
+    loadRecords();
+  }
+
+  // ---- Overview (Approved/Registered/Rejected/Inactive counts per type) ----
+  async function loadOverview() {
+    overviewArea.innerHTML = '<div class="loading-state">Loading summary…</div>';
+    try {
+      const res = await apiFetch("/api/summary");
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Could not load summary.");
+      renderOverview(data);
+    } catch (err) {
+      overviewArea.innerHTML = `<div class="empty-state">${escapeHtml(err.message)}</div>`;
+    }
+  }
+
+  function renderOverview(data) {
+    overviewArea.innerHTML = "";
+
+    const totalCard = document.createElement("div");
+    totalCard.className = "overview-total-card";
+    totalCard.innerHTML = `
+      <div class="overview-total-count">${data.grandTotal}</div>
+      <div class="overview-total-label">Total registrations across all types</div>
+    `;
+    overviewArea.appendChild(totalCard);
+
+    const grid = document.createElement("div");
+    grid.className = "overview-grid";
+
+    data.types.forEach((t) => {
+      const card = document.createElement("div");
+      card.className = "overview-card";
+      card.title = `View ${t.label}`;
+
+      const header = document.createElement("div");
+      header.className = "overview-card-header";
+      header.innerHTML = `<span>${escapeHtml(t.label)}</span><span class="overview-card-total">${t.total}</span>`;
+      card.appendChild(header);
+
+      const bars = document.createElement("div");
+      bars.className = "overview-card-bars";
+      STATUSES.forEach((s) => {
+        const count = t.byStatus[s] || 0;
+        const pct = t.total > 0 ? Math.round((count / t.total) * 100) : 0;
+        const row = document.createElement("div");
+        row.className = "overview-bar-row";
+        row.innerHTML = `
+          <span class="overview-bar-label">${escapeHtml(s)}</span>
+          <div class="overview-bar-track"><div class="overview-bar-fill status-${escapeHtml(s)}" style="width:${pct}%"></div></div>
+          <span class="overview-bar-count">${count}</span>
+        `;
+        bars.appendChild(row);
+      });
+      card.appendChild(bars);
+
+      card.addEventListener("click", () => {
+        renderNav();
+        showRecordsView(t.key);
+      });
+
+      grid.appendChild(card);
+    });
+
+    overviewArea.appendChild(grid);
+  }
 
   // ---- Sidebar ----
   // Top-level entries (Visitors, Exhibitor EOI, Exhibitor Booking, …) all
@@ -79,6 +224,15 @@
   // chevron that expands to reveal its nested items.
   function renderNav() {
     navList.innerHTML = "";
+
+    const overviewBtn = document.createElement("button");
+    overviewBtn.className = "nav-item" + (currentType === OVERVIEW_KEY ? " active" : "");
+    overviewBtn.textContent = "Overview";
+    overviewBtn.addEventListener("click", () => {
+      renderNav();
+      showOverview();
+    });
+    navList.appendChild(overviewBtn);
 
     // Walk TYPES once, grouping consecutive same-group entries while
     // preserving overall order (so groups can sit anywhere in the list).
@@ -141,14 +295,8 @@
     btn.className = "nav-item" + (nested ? " nested" : "") + (t.key === currentType ? " active" : "");
     btn.textContent = t.label;
     btn.addEventListener("click", () => {
-      currentType = t.key;
-      currentStatus = "All";
-      currentPage = 1;
-      filterValues = {};
       renderNav();
-      renderStatusTabs();
-      renderFilterBar();
-      loadRecords();
+      showRecordsView(t.key);
     });
     return btn;
   }
@@ -305,7 +453,7 @@
 
     const params = buildQueryParams();
     try {
-      const res = await fetch(`/api/records/${currentType}?${params.toString()}`);
+      const res = await apiFetch(`/api/records/${currentType}?${params.toString()}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Could not load records.");
       renderTable(cfg, data);
@@ -317,8 +465,17 @@
     }
   }
 
+  // Columns shown in the main list table — kept separate from the full
+  // column set (used by the View/Edit modals) so operationally secondary
+  // fields don't make the table unreadably wide. See `hideInTable` in
+  // server.js's TYPE_CONFIG.
+  function tableColumns(cfg) {
+    return cfg.columns.filter((c) => !c.hideInTable);
+  }
+
   function renderTable(cfg, data) {
     const { rows, total, page, pageSize } = data;
+    const columns = tableColumns(cfg);
 
     if (rows.length === 0) {
       tableArea.innerHTML = '<div class="empty-state">No records found.</div>';
@@ -335,7 +492,7 @@
         th.textContent = label;
         headRow.appendChild(th);
       });
-      cfg.columns.forEach((col) => {
+      columns.forEach((col) => {
         const th = document.createElement("th");
         th.textContent = col.label;
         headRow.appendChild(th);
@@ -358,7 +515,7 @@
         statusTd.appendChild(pill);
         tr.appendChild(statusTd);
 
-        cfg.columns.forEach((col) => {
+        columns.forEach((col) => {
           const td = document.createElement("td");
           td.textContent = formatValue(row[col.key], col.type);
           tr.appendChild(td);
@@ -448,7 +605,7 @@
 
   async function updateStatus(id, status) {
     try {
-      const res = await fetch(`/api/records/${currentType}/${id}`, {
+      const res = await apiFetch(`/api/records/${currentType}/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status }),
@@ -464,7 +621,7 @@
   async function deleteRecord(id) {
     if (!confirm("Delete this record permanently? This cannot be undone.")) return;
     try {
-      const res = await fetch(`/api/records/${currentType}/${id}`, { method: "DELETE" });
+      const res = await apiFetch(`/api/records/${currentType}/${id}`, { method: "DELETE" });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Could not delete record.");
       loadRecords();
@@ -473,6 +630,8 @@
     }
   }
 
+  // View modal always shows every field (not just the table's subset), so
+  // this is the place to see stall preferences, product categories, etc.
   function openModal(cfg, row) {
     modalBody.innerHTML = "";
     const allFields = [...cfg.columns, { key: "status", label: "Status" }];
@@ -491,7 +650,7 @@
   }
 
   // ---- Edit modal (pencil action) — lets an admin change any of the
-  // record's own fields, plus its status, and saves via PATCH. ----
+  // record's own editable fields, plus its status, and saves via PATCH. ----
   function openEditModal(cfg, row) {
     editModalError.classList.remove("show");
     editModalError.textContent = "";
@@ -524,10 +683,43 @@
       label.textContent = col.label;
       field.appendChild(label);
 
-      const input = document.createElement("input");
-      input.type = col.type === "date" ? "text" : "text";
-      input.value = formatValue(row[col.key], col.type);
-      if (col.type === "date") input.disabled = true; // registration date isn't editable
+      const notEditable = col.editable === false || col.type === "date";
+      const currentValue = formatValue(row[col.key], col.type);
+
+      let input;
+      if (col.type === "select" && Array.isArray(col.options)) {
+        input = document.createElement("select");
+        let hasCurrentValue = !currentValue;
+        col.options.forEach((optValue) => {
+          const opt = document.createElement("option");
+          opt.value = optValue;
+          opt.textContent = optValue;
+          if (optValue === currentValue) {
+            opt.selected = true;
+            hasCurrentValue = true;
+          }
+          input.appendChild(opt);
+        });
+        // If the stored value isn't one of the known options (e.g. legacy
+        // data, or a typo entered before this dropdown existed), keep it
+        // visible and selected instead of silently switching to the first
+        // option — an admin saving the form shouldn't accidentally change
+        // an unrelated field's value.
+        if (!hasCurrentValue && currentValue) {
+          const opt = document.createElement("option");
+          opt.value = currentValue;
+          opt.textContent = `${currentValue} (current value)`;
+          opt.selected = true;
+          input.insertBefore(opt, input.firstChild);
+        }
+      } else {
+        input = document.createElement("input");
+        input.type = col.type === "number" ? "number" : "text";
+        if (col.type === "number") input.step = "any";
+        input.value = currentValue;
+      }
+
+      if (notEditable) input.disabled = true;
       field.appendChild(input);
 
       editModalBody.appendChild(field);
@@ -537,14 +729,14 @@
     editModalSave.onclick = async () => {
       const body = { status: inputs.status.value };
       cfg.columns.forEach((col) => {
-        if (col.type === "date") return; // read-only, never sent
+        if (col.editable === false || col.type === "date") return; // read-only, never sent
         body[col.key] = inputs[col.key].value;
       });
 
       editModalSave.disabled = true;
       editModalSave.textContent = "Saving…";
       try {
-        const res = await fetch(`/api/records/${currentType}/${row.id}`, {
+        const res = await apiFetch(`/api/records/${currentType}/${row.id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
@@ -571,6 +763,7 @@
       const d = new Date(value);
       return isNaN(d) ? String(value) : d.toLocaleString();
     }
+    if (type === "boolean") return value ? "Yes" : "No";
     if (Array.isArray(value)) return value.join(", ");
     if (typeof value === "object") return JSON.stringify(value);
     return String(value);

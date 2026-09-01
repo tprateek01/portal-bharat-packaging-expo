@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Admin Portal — Bharat Packaging Expo</title>
+<title id="pageTitleTag">Admin Portal</title>
 <link rel="stylesheet" href="/css/portal.css" />
 </head>
 <body>
@@ -11,18 +11,18 @@
 <div class="app-shell">
   <aside class="sidebar">
     <div class="brand-row">
-      <img class="brand-logo" src="/images/bharat-packaging-expo-logo@2x.png" alt="Bharat Packaging Expo" />
+      <img id="brandLogo" class="brand-logo" src="" alt="" />
     </div>
 
     <div class="event-card">
-      <div class="event-card-title">Bharat Packaging<br />Expo 2027</div>
+      <div id="eventCardTitle" class="event-card-title"></div>
       <div class="event-card-row">
         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
-        <span>30 Aug – 02 Sept 2027</span>
+        <span id="eventCardDates"></span>
       </div>
       <div class="event-card-row">
         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>
-        <span>India Expo Centre &amp; Mart, Greater Noida</span>
+        <span id="eventCardVenue"></span>
       </div>
     </div>
 
@@ -36,20 +36,24 @@
       <button class="export-btn" id="exportBtn">⬇ Export Data</button>
     </div>
 
-    <div class="status-tabs" id="statusTabs"></div>
+    <div id="overviewArea" class="overview-area" style="display:none;"></div>
 
-    <div class="filter-bar" id="filterBar"></div>
+    <div id="recordsView" style="display:none;">
+      <div class="status-tabs" id="statusTabs"></div>
 
-    <div class="search-summary" id="searchSummary"></div>
+      <div class="filter-bar" id="filterBar"></div>
 
-    <div class="table-wrap">
-      <div id="tableArea"><div class="loading-state">Loading records…</div></div>
-      <div class="table-footer">
-        <span id="resultCount"></span>
-        <div class="pager">
-          <button id="prevPage">‹ Prev</button>
-          <span id="pageIndicator">Page 1</span>
-          <button id="nextPage">Next ›</button>
+      <div class="search-summary" id="searchSummary"></div>
+
+      <div class="table-wrap">
+        <div id="tableArea"><div class="loading-state">Loading records…</div></div>
+        <div class="table-footer">
+          <span id="resultCount"></span>
+          <div class="pager">
+            <button id="prevPage">‹ Prev</button>
+            <span id="pageIndicator">Page 1</span>
+            <button id="nextPage">Next ›</button>
+          </div>
         </div>
       </div>
     </div>

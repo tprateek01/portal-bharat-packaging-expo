@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Admin Login — Bharat Packaging Expo</title>
+<title id="pageTitleTag">Admin Login</title>
 <link rel="stylesheet" href="/css/portal.css" />
 </head>
 <body>
@@ -13,21 +13,15 @@
 
     <div class="login-brand-panel">
       <div class="login-brand-inner">
-        <img
-          class="login-logo"
-          src="/images/bharat-packaging-expo-logo@2x.png"
-          srcset="/images/bharat-packaging-expo-logo.png 300w, /images/bharat-packaging-expo-logo@2x.png 600w"
-          sizes="220px"
-          alt="Bharat Packaging Expo — 30th Aug to 02nd Sept 2027, India Expo Centre &amp; Mart, Greater Noida"
-        />
-        <div class="login-brand-tag">PACKAGING · SUSTAINABILITY · INNOVATION</div>
-        <div class="login-brand-dates">30 Aug – 02 Sept 2027 &nbsp;·&nbsp; India Expo Centre &amp; Mart, Greater Noida</div>
+        <img id="brandLogo" class="login-logo" src="" alt="" />
+        <div id="brandTag" class="login-brand-tag"></div>
+        <div id="brandDates" class="login-brand-dates"></div>
       </div>
     </div>
 
     <div class="login-form-panel">
       <div class="login-card">
-        <h1>Welcome to the Bharat Packaging Expo Admin Portal</h1>
+        <h1 id="welcomeHeading">Welcome to the Admin Portal</h1>
         <p class="sub">Your control center for visitors, exhibitors &amp; bookings.</p>
 
         <h2 class="signin-heading">Sign In</h2>
@@ -45,7 +39,7 @@
           <div id="formMsg" class="form-msg"></div>
         </form>
 
-        <div class="login-footer-note">© Copyright Bharat Packaging Expo 2026–27</div>
+        <div id="footerNote" class="login-footer-note"></div>
       </div>
     </div>
 
@@ -55,6 +49,26 @@
 <script>
   const form = document.getElementById("loginForm");
   const msg = document.getElementById("formMsg");
+
+  // Pull this event's branding (name/logo/dates/venue) and fill in the
+  // page — nothing here is hardcoded to one event.
+  fetch("/api/branding")
+    .then((r) => r.json())
+    .then((b) => {
+      document.getElementById("pageTitleTag").textContent = `Admin Login — ${b.eventName}`;
+      const logo = document.getElementById("brandLogo");
+      logo.src = `/images/${b.logo2x}`;
+      logo.srcset = `/images/${b.logo} 300w, /images/${b.logo2x} 600w`;
+      logo.sizes = "220px";
+      logo.alt = `${b.eventName} — ${b.dateRange}, ${b.venue}`;
+      document.getElementById("brandTag").textContent = b.tagline;
+      document.getElementById("brandDates").textContent = `${b.dateRange}  ·  ${b.venue}`;
+      document.getElementById("welcomeHeading").textContent = `Welcome to the ${b.eventName} Admin Portal`;
+      document.getElementById("footerNote").textContent = `© Copyright ${b.eventName} ${b.copyrightYear}`;
+    })
+    .catch(() => {
+      // Branding is cosmetic only — a failed fetch should never block login.
+    });
 
   // If already signed in, skip straight to the dashboard.
   fetch("/api/session")

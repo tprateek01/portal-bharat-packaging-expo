@@ -63,10 +63,27 @@ Deploy this folder as its **own** Vercel project (separate from
 1. Push this folder to its own GitHub repo (or a subfolder with its own
    Vercel "Root Directory" setting).
 2. Import it into Vercel.
-3. Add the same four environment variables from `.env` (`DATABASE_URL`,
-   `JWT_SECRET`, `ADMIN_USERNAME`, `ADMIN_PASSWORD`) in the Vercel
-   project settings.
+3. Add all environment variables from `.env` (see `.env.example`) in the
+   Vercel project settings.
 4. Deploy.
+
+## Reusing this portal for a NEW event
+
+This whole app is written to be event-agnostic — nothing about "Bharat
+Packaging Expo" is hardcoded in the code. To stand up the portal for a
+different event:
+
+1. Create a **new Vercel project** from the same codebase (don't touch
+   the old event's deployment).
+2. Set that event's own `DATABASE_URL` (its registration site's DB).
+3. Set the `EVENT_NAME`, `EVENT_TAGLINE`, `EVENT_DATE_RANGE`,
+   `EVENT_VENUE`, `EVENT_COPYRIGHT_YEAR` and `HAS_OVERSEAS_BUYERS` vars
+   for that event (see `.env.example`).
+4. Drop that event's logo into `public/images/` and point `EVENT_LOGO` /
+   `EVENT_LOGO_2X` at the filenames.
+5. Deploy. That's it — no code edits, login page and dashboard sidebar
+   pick up the new name/logo/dates/venue automatically from
+   `GET /api/branding`.
 
 ## Notes / next steps
 

@@ -589,6 +589,51 @@ table.data-table tr:last-child td { border-bottom: none; }
 .modal-save:hover { background: var(--brand-pink-dark); }
 .modal-save:disabled { opacity: 0.6; cursor: not-allowed; }
 
+/* ---------- Overview (landing summary page) ---------- */
+.overview-total-card {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px 24px;
+  margin-bottom: 20px;
+}
+.overview-total-count { font-size: 2rem; font-weight: 800; color: var(--brand-pink-dark); line-height: 1.1; }
+.overview-total-label { margin-top: 4px; color: var(--muted); font-size: 0.85rem; font-weight: 600; }
+
+.overview-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+}
+.overview-card {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 18px;
+  cursor: pointer;
+  transition: box-shadow 0.15s ease, transform 0.15s ease;
+}
+.overview-card:hover { box-shadow: 0 6px 18px rgba(20, 20, 30, 0.08); transform: translateY(-1px); }
+.overview-card-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  font-weight: 700;
+  font-size: 0.95rem;
+  margin-bottom: 12px;
+}
+.overview-card-total { color: var(--brand-pink-dark); font-size: 1.1rem; }
+.overview-card-bars { display: flex; flex-direction: column; gap: 8px; }
+.overview-bar-row { display: grid; grid-template-columns: 78px 1fr 28px; align-items: center; gap: 8px; }
+.overview-bar-label { font-size: 0.74rem; color: var(--muted); font-weight: 600; }
+.overview-bar-track { height: 7px; border-radius: 999px; background: var(--bg); overflow: hidden; }
+.overview-bar-fill { height: 100%; border-radius: 999px; }
+.overview-bar-fill.status-Registered { background: var(--warn); }
+.overview-bar-fill.status-Approved { background: var(--success); }
+.overview-bar-fill.status-Rejected { background: var(--error); }
+.overview-bar-fill.status-Inactive { background: var(--muted); }
+.overview-bar-count { font-size: 0.78rem; color: var(--ink); font-weight: 700; text-align: right; }
+
 @media (max-width: 800px) {
   .sidebar { display: none; }
   .main { padding: 18px; }
