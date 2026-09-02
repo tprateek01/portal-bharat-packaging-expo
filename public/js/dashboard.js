@@ -68,7 +68,9 @@
   const comingSoonArea = document.getElementById("comingSoonArea");
   const bulkUploadArea = document.getElementById("bulkUploadArea");
   const hallStallArea = document.getElementById("hallStallArea");
+  const analyticsArea = document.getElementById("analyticsArea");
   const recordsView = document.getElementById("recordsView");
+  const addBtn = document.getElementById("addBtn");
   const modalBackdrop = document.getElementById("modalBackdrop");
   const modalBody = document.getElementById("modalBody");
   const modalClose = document.getElementById("modalClose");
@@ -145,8 +147,10 @@
     comingSoonArea.style.display = "none";
     bulkUploadArea.style.display = "none";
     hallStallArea.style.display = "none";
+    analyticsArea.style.display = "none";
     recordsView.style.display = "none";
     exportBtn.style.display = "none";
+    addBtn.style.display = "none";
     pageTitle.textContent = "Overview";
     loadOverview();
   }
@@ -160,8 +164,23 @@
     comingSoonArea.style.display = "none";
     bulkUploadArea.style.display = "none";
     hallStallArea.style.display = "none";
+    analyticsArea.style.display = "none";
     recordsView.style.display = "block";
     exportBtn.style.display = "";
+    // Task 6/7: Payments and Service Request Forms are the only two
+    // sections where an admin manually creates a new row (everything
+    // else here is populated from the registration website).
+    if (typeKey === "payments") {
+      addBtn.style.display = "";
+      addBtn.textContent = "+ Add Payment";
+      addBtn.onclick = () => openPaymentModal();
+    } else if (typeKey === "service_requests") {
+      addBtn.style.display = "";
+      addBtn.textContent = "+ Add Service Request";
+      addBtn.onclick = () => openServiceRequestModal();
+    } else {
+      addBtn.style.display = "none";
+    }
     renderStatusTabs();
     renderFilterBar();
     loadRecords();
@@ -251,8 +270,8 @@
       kind: "group",
       name: "Analytics",
       items: [
-        { key: "analytics_exhibitors", label: "Exhibitors", comingSoon: true, comingSoonNote: "Exhibitor charts & summary — coming in a later update." },
-        { key: "analytics_domestic_buyers", label: "Domestic Buyers", comingSoon: true, comingSoonNote: "Buyer charts & summary — coming in a later update." },
+        { key: "analytics_exhibitors", label: "Exhibitors", custom: "analyticsExhibitors" },
+        { key: "analytics_domestic_buyers", label: "Domestic Buyers", custom: "analyticsBuyers" },
       ],
     },
     {
@@ -273,8 +292,8 @@
     },
     { kind: "item", item: { key: "visitors_delegates" } },
     { kind: "item", item: { key: "exhibitor_eoi" } },
-    { kind: "item", item: { key: "payments", label: "Payments", comingSoon: true, comingSoonNote: "Exhibitor payment records — coming in a later update." } },
-    { kind: "item", item: { key: "service_requests", label: "Service Request Forms", comingSoon: true, comingSoonNote: "Service requests raised by exhibitors — coming in a later update." } },
+    { kind: "item", item: { key: "payments", label: "Payments" } },
+    { kind: "item", item: { key: "service_requests", label: "Service Request Forms" } },
   ];
 
   // Resolves a NAV_LAYOUT entry against the live TYPES list from the
@@ -368,6 +387,10 @@
         showBulkUpload();
       } else if (t.custom === "hallStall") {
         showHallStall();
+      } else if (t.custom === "analyticsExhibitors") {
+        showAnalytics("exhibitors");
+      } else if (t.custom === "analyticsBuyers") {
+        showAnalytics("buyers");
       } else if (t.comingSoon) {
         showComingSoon(t.key, t.label, t.comingSoonNote);
       } else {
@@ -386,8 +409,10 @@
     comingSoonArea.style.display = "none";
     recordsView.style.display = "none";
     hallStallArea.style.display = "none";
+    analyticsArea.style.display = "none";
     bulkUploadArea.style.display = "block";
     exportBtn.style.display = "none";
+    addBtn.style.display = "none";
     pageTitle.textContent = "Domestic Buyer Bulk Upload";
     selectedBulkFile = null;
 
@@ -570,8 +595,10 @@
     recordsView.style.display = "none";
     bulkUploadArea.style.display = "none";
     hallStallArea.style.display = "none";
+    analyticsArea.style.display = "none";
     comingSoonArea.style.display = "block";
     exportBtn.style.display = "none";
+    addBtn.style.display = "none";
     pageTitle.textContent = label;
     comingSoonArea.innerHTML = `
       <div class="coming-soon-card">
@@ -598,9 +625,11 @@
     overviewArea.style.display = "none";
     comingSoonArea.style.display = "none";
     bulkUploadArea.style.display = "none";
+    analyticsArea.style.display = "none";
     recordsView.style.display = "none";
     hallStallArea.style.display = "block";
     exportBtn.style.display = "none";
+    addBtn.style.display = "none";
     pageTitle.textContent = "Hall & Stall Management";
     hallStallTab = "Vacant";
     stallPage = 1;
@@ -1806,6 +1835,341 @@
     };
 
     editModalBackdrop.classList.add("open");
+  }
+
+  // ---- Task 6: Add Payment modal ----
+  // Editing an existing payment (amount/mode/reference/date/remarks/status)
+  // reuses the generic openEditModal above — the pencil action already
+  // works for it since "payments" is a normal TYPE_CONFIG type. This modal
+  // only covers *creating* a new payment, because that needs an exhibitor
+  // picker the generic Add-a-record flow doesn't have.
+  const PAYMENT_MODES_CLIENT = ["Cash", "Cheque", "NEFT", "RTGS", "UPI", "Credit Card", "Debit Card", "Other"];
+  const SERVICE_REQUEST_TYPES_CLIENT = [
+    "Electrical", "Furniture", "Internet / Wi-Fi", "Housekeeping", "Security",
+    "Carpentry", "Signage", "Water Supply", "Other",
+  ];
+
+  // Shared by both Add modals: a debounced "search company name -> pick
+  // one exhibitor" control, same interaction as the Allot Stall search.
+  function buildExhibitorPicker(onPick) {
+    let selected = null;
+    let debounceId = null;
+
+    const searchField = document.createElement("div");
+    searchField.className = "edit-field";
+    const label = document.createElement("label");
+    label.textContent = "Search Exhibitor (company name)";
+    const searchInput = document.createElement("input");
+    searchInput.type = "text";
+    searchInput.placeholder = "Start typing a company name…";
+    searchField.appendChild(label);
+    searchField.appendChild(searchInput);
+
+    const selectedWrap = document.createElement("div");
+    selectedWrap.className = "allot-current";
+    selectedWrap.innerHTML = `<span class="allot-none">No exhibitor selected yet.</span>`;
+
+    const resultsArea = document.createElement("div");
+    resultsArea.className = "allot-results";
+
+    async function search(term) {
+      if (!term || !term.trim()) {
+        resultsArea.innerHTML = "";
+        return;
+      }
+      resultsArea.innerHTML = '<div class="loading-state">Searching…</div>';
+      try {
+        const params = new URLSearchParams({ search: term.trim(), pageSize: "10" });
+        const res = await apiFetch(`/api/records/exhibitor_booking?${params.toString()}`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Could not search exhibitors.");
+        renderResults(data.rows);
+      } catch (err) {
+        resultsArea.innerHTML = `<div class="empty-state">${escapeHtml(err.message)}</div>`;
+      }
+    }
+
+    function renderResults(rows) {
+      if (!rows || rows.length === 0) {
+        resultsArea.innerHTML = '<div class="empty-state">No exhibitors match.</div>';
+        return;
+      }
+      resultsArea.innerHTML = "";
+      rows.forEach((r) => {
+        const item = document.createElement("button");
+        item.type = "button";
+        item.className = "allot-result-item";
+        item.innerHTML = `<span>${escapeHtml(r.company_name || "—")}</span><span class="allot-result-meta">${escapeHtml(r.contact_email || "")}</span>`;
+        item.addEventListener("click", () => {
+          selected = r;
+          selectedWrap.innerHTML = `Selected: <strong>${escapeHtml(r.company_name || "—")}</strong>`;
+          resultsArea.innerHTML = "";
+          searchInput.value = r.company_name || "";
+          if (onPick) onPick(r);
+        });
+        resultsArea.appendChild(item);
+      });
+    }
+
+    searchInput.addEventListener("input", () => {
+      selected = null;
+      if (onPick) onPick(null);
+      clearTimeout(debounceId);
+      debounceId = setTimeout(() => search(searchInput.value), 350);
+    });
+
+    return {
+      fields: [searchField, resultsArea, selectedWrap],
+      getSelected: () => selected,
+    };
+  }
+
+  function buildPlainField(label, type) {
+    const field = document.createElement("div");
+    field.className = "edit-field";
+    const labelEl = document.createElement("label");
+    labelEl.textContent = label;
+    field.appendChild(labelEl);
+    const input = document.createElement("input");
+    input.type = type === "number" ? "number" : "text";
+    if (type === "number") input.step = "any";
+    field.appendChild(input);
+    return { field, input };
+  }
+
+  function buildSelectField(label, options) {
+    const field = document.createElement("div");
+    field.className = "edit-field";
+    const labelEl = document.createElement("label");
+    labelEl.textContent = label;
+    field.appendChild(labelEl);
+    const select = document.createElement("select");
+    select.innerHTML = `<option value="">Select…</option>` + options.map((o) => `<option value="${escapeHtml(o)}">${escapeHtml(o)}</option>`).join("");
+    field.appendChild(select);
+    return { field, input: select };
+  }
+
+  function openPaymentModal() {
+    editModalError.classList.remove("show");
+    editModalError.textContent = "";
+    editModalBody.innerHTML = "";
+    document.querySelector("#editModalBackdrop h2").textContent = "Add Payment";
+
+    const picker = buildExhibitorPicker();
+    picker.fields.forEach((el) => editModalBody.appendChild(el));
+
+    const amountF = buildPlainField("Amount (₹)", "number");
+    const modeF = buildSelectField("Payment Mode", PAYMENT_MODES_CLIENT);
+    const refF = buildPlainField("Transaction / Reference No.", "text");
+    const dateF = buildPlainField("Payment Date (YYYY-MM-DD)", "text");
+    const remarksF = buildPlainField("Remarks", "text");
+    [amountF, modeF, refF, dateF, remarksF].forEach((f) => editModalBody.appendChild(f.field));
+
+    editModalSave.textContent = "Save Payment";
+    editModalSave.onclick = async () => {
+      const exhibitor = picker.getSelected();
+      if (!exhibitor) {
+        editModalError.textContent = "Search and select an exhibitor first.";
+        editModalError.classList.add("show");
+        return;
+      }
+      const amountValue = amountF.input.value;
+      if (!amountValue || Number(amountValue) <= 0) {
+        editModalError.textContent = "Enter a valid amount.";
+        editModalError.classList.add("show");
+        return;
+      }
+
+      editModalSave.disabled = true;
+      editModalSave.textContent = "Saving…";
+      try {
+        const res = await apiFetch("/api/payments", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            exhibitorBookingId: exhibitor.id,
+            amount: amountValue,
+            payment_mode: modeF.input.value,
+            transaction_reference: refF.input.value,
+            payment_date: dateF.input.value,
+            remarks: remarksF.input.value,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Could not record payment.");
+        closeEditModal();
+        document.querySelector("#editModalBackdrop h2").textContent = "Edit Record";
+        editModalSave.textContent = "Save Changes";
+        loadRecords();
+      } catch (err) {
+        editModalError.textContent = err.message;
+        editModalError.classList.add("show");
+      } finally {
+        editModalSave.disabled = false;
+        editModalSave.textContent = "Save Payment";
+      }
+    };
+
+    editModalBackdrop.classList.add("open");
+  }
+
+  // ---- Task 7: Add Service Request modal (same shape as Add Payment) ----
+  function openServiceRequestModal() {
+    editModalError.classList.remove("show");
+    editModalError.textContent = "";
+    editModalBody.innerHTML = "";
+    document.querySelector("#editModalBackdrop h2").textContent = "Add Service Request";
+
+    const picker = buildExhibitorPicker();
+    picker.fields.forEach((el) => editModalBody.appendChild(el));
+
+    const typeF = buildSelectField("Service Type", SERVICE_REQUEST_TYPES_CLIENT);
+    const descF = buildPlainField("Description", "text");
+    const dateF = buildPlainField("Requested Date (YYYY-MM-DD)", "text");
+    [typeF, descF, dateF].forEach((f) => editModalBody.appendChild(f.field));
+
+    editModalSave.textContent = "Save Request";
+    editModalSave.onclick = async () => {
+      const exhibitor = picker.getSelected();
+      if (!exhibitor) {
+        editModalError.textContent = "Search and select an exhibitor first.";
+        editModalError.classList.add("show");
+        return;
+      }
+      if (!typeF.input.value) {
+        editModalError.textContent = "Select a service type.";
+        editModalError.classList.add("show");
+        return;
+      }
+
+      editModalSave.disabled = true;
+      editModalSave.textContent = "Saving…";
+      try {
+        const res = await apiFetch("/api/service-requests", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            exhibitorBookingId: exhibitor.id,
+            request_type: typeF.input.value,
+            description: descF.input.value,
+            requested_date: dateF.input.value,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Could not save service request.");
+        closeEditModal();
+        document.querySelector("#editModalBackdrop h2").textContent = "Edit Record";
+        editModalSave.textContent = "Save Changes";
+        loadRecords();
+      } catch (err) {
+        editModalError.textContent = err.message;
+        editModalError.classList.add("show");
+      } finally {
+        editModalSave.disabled = false;
+        editModalSave.textContent = "Save Request";
+      }
+    };
+
+    editModalBackdrop.classList.add("open");
+  }
+
+  // ---- Task 8: Analytics ----
+  async function showAnalytics(kind) {
+    currentType = kind === "exhibitors" ? "analytics_exhibitors" : "analytics_domestic_buyers";
+    overviewArea.style.display = "none";
+    comingSoonArea.style.display = "none";
+    bulkUploadArea.style.display = "none";
+    hallStallArea.style.display = "none";
+    recordsView.style.display = "none";
+    analyticsArea.style.display = "block";
+    exportBtn.style.display = "none";
+    addBtn.style.display = "none";
+    pageTitle.textContent = kind === "exhibitors" ? "Exhibitor Analytics" : "Domestic Buyer Analytics";
+    analyticsArea.innerHTML = '<div class="loading-state">Loading analytics…</div>';
+
+    try {
+      const res = await apiFetch(kind === "exhibitors" ? "/api/analytics/exhibitors" : "/api/analytics/buyers");
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Could not load analytics.");
+      if (kind === "exhibitors") renderExhibitorAnalytics(data);
+      else renderBuyerAnalytics(data);
+    } catch (err) {
+      analyticsArea.innerHTML = `<div class="empty-state">${escapeHtml(err.message)}</div>`;
+    }
+  }
+
+  function statCard(value, label) {
+    return `<div class="analytics-stat-card"><div class="analytics-stat-value">${escapeHtml(String(value))}</div><div class="analytics-stat-label">${escapeHtml(label)}</div></div>`;
+  }
+
+  function barSection(title, items) {
+    if (!items || items.length === 0) {
+      return `<div class="analytics-section"><div class="analytics-section-title">${escapeHtml(title)}</div><div class="empty-state">No data yet.</div></div>`;
+    }
+    const max = Math.max(...items.map((i) => i.count), 1);
+    const rows = items
+      .map(
+        (i) => `
+      <div class="analytics-bar-row">
+        <span class="analytics-bar-label" title="${escapeHtml(i.label)}">${escapeHtml(i.label)}</span>
+        <div class="analytics-bar-track"><div class="analytics-bar-fill" style="width:${Math.round((i.count / max) * 100)}%"></div></div>
+        <span class="analytics-bar-count">${i.count}</span>
+      </div>`
+      )
+      .join("");
+    return `<div class="analytics-section"><div class="analytics-section-title">${escapeHtml(title)}</div>${rows}</div>`;
+  }
+
+  function trendSection(title, items) {
+    if (!items || items.length === 0) {
+      return `<div class="analytics-section"><div class="analytics-section-title">${escapeHtml(title)}</div><div class="empty-state">No data yet.</div></div>`;
+    }
+    const max = Math.max(...items.map((i) => i.count), 1);
+    const w = 640, h = 140, pad = 10;
+    const step = items.length > 1 ? (w - pad * 2) / (items.length - 1) : 0;
+    const points = items
+      .map((i, idx) => {
+        const x = pad + step * idx;
+        const y = h - pad - (i.count / max) * (h - pad * 2);
+        return `${x.toFixed(1)},${y.toFixed(1)}`;
+      })
+      .join(" ");
+    return `
+      <div class="analytics-section">
+        <div class="analytics-section-title">${escapeHtml(title)}</div>
+        <svg class="analytics-trend-svg" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">
+          <polyline fill="none" stroke="var(--brand-pink)" stroke-width="2" points="${points}" />
+        </svg>
+        <div class="analytics-trend-labels"><span>${escapeHtml(items[0].label)}</span><span>${escapeHtml(items[items.length - 1].label)}</span></div>
+      </div>
+    `;
+  }
+
+  function renderExhibitorAnalytics(data) {
+    const t = data.totals;
+    let html = `<div class="analytics-stats-grid">
+      ${statCard(t.totalExhibitors, "Total Exhibitors")}
+      ${statCard(t.areaSqm.toLocaleString("en-IN"), "Area Booked (sqm)")}
+      ${statCard("₹" + t.totalAmount.toLocaleString("en-IN"), "Total Amount")}
+      ${statCard("₹" + t.paidAmount.toLocaleString("en-IN"), "Paid Amount")}
+      ${statCard("₹" + t.outstandingAmount.toLocaleString("en-IN"), "Outstanding Amount")}
+    </div>`;
+    html += `<div class="analytics-grid-2">${barSection("Participation Category", data.byParticipation)}${barSection("Top Countries", data.byCountry)}</div>`;
+    html += `<div class="analytics-grid-2">${barSection("Top States (India)", data.byState)}${data.bySector ? barSection("Product / Sector Wise", data.bySector) : '<div class="analytics-section"><div class="analytics-section-title">Product / Sector Wise</div><div class="empty-state">Not available for this event\'s data.</div></div>'}</div>`;
+    html += trendSection("Registration Trend", data.trend);
+    analyticsArea.innerHTML = html;
+  }
+
+  function renderBuyerAnalytics(data) {
+    const t = data.totals;
+    let html = `<div class="analytics-stats-grid">
+      ${statCard(t.totalBuyers, "Total Buyers")}
+      ${statCard(t.byStatus.Approved || 0, "Approved")}
+      ${statCard(t.byStatus.Registered || 0, "Registered")}
+      ${statCard(t.byStatus.Rejected || 0, "Rejected")}
+    </div>`;
+    html += `<div class="analytics-grid-2">${barSection("Country Wise", data.byCountry)}${trendSection("Registration Trend", data.trend)}</div>`;
+    analyticsArea.innerHTML = html;
   }
 
   function formatValue(value, type) {

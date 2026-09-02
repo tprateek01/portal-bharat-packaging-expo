@@ -74,6 +74,14 @@ const INDIAN_STATES = [
   "Lakshadweep", "Puducherry", "Other / Outside India",
 ];
 
+// Task 6 (Payments) / Task 7 (Service Request Forms) — small reference
+// lists for their dropdowns, same pattern as COUNTRIES/INDIAN_STATES above.
+const PAYMENT_MODES = ["Cash", "Cheque", "NEFT", "RTGS", "UPI", "Credit Card", "Debit Card", "Other"];
+const SERVICE_REQUEST_TYPES = [
+  "Electrical", "Furniture", "Internet / Wi-Fi", "Housekeeping", "Security",
+  "Carpentry", "Signage", "Water Supply", "Other",
+];
+
 // ---------------------------------------------------------------------
 // Table configuration — every table/column name the API can touch is
 // defined here. Route params are always validated against this object,
@@ -219,6 +227,50 @@ const TYPE_CONFIG = {
       { key: "gst_amount", label: "GST Amount", type: "number", hideInTable: true },
     ],
   },
+
+  // ---------------------------------------------------------------------
+  // Task 6: Payments — this portal's own table (not the registration
+  // site's). New payments are recorded via the dedicated
+  // POST /api/payments endpoint below (needs an exhibitor picker, which
+  // the generic Add-a-record flow doesn't have); everything else — list,
+  // search, status tabs, edit, delete, export, Overview card — comes free
+  // from the generic records system via FROM_OVERRIDES' join below.
+  // ---------------------------------------------------------------------
+  payments: {
+    table: "payments",
+    label: "Payments",
+    searchable: ["company_name", "transaction_reference"],
+    filters: { payment_mode: "payment_mode" },
+    columns: [
+      { key: "company_name", label: "Exhibitor / Company", editable: false },
+      { key: "amount", label: "Amount (₹)", type: "number" },
+      { key: "payment_mode", label: "Payment Mode", type: "select", options: PAYMENT_MODES },
+      { key: "transaction_reference", label: "Transaction / Reference No." },
+      { key: "payment_date", label: "Payment Date" },
+      { key: "remarks", label: "Remarks", hideInTable: true },
+      { key: "created_at", label: "Recorded On", type: "date", editable: false },
+    ],
+  },
+
+  // ---------------------------------------------------------------------
+  // Task 7: Service Request Forms — same shape as Payments: the portal's
+  // own table, new requests added via POST /api/service-requests, rest of
+  // the workflow (approve/reject a request, search, export…) reuses the
+  // generic records system.
+  // ---------------------------------------------------------------------
+  service_requests: {
+    table: "service_requests",
+    label: "Service Request Forms",
+    searchable: ["company_name", "description"],
+    filters: { request_type: "request_type" },
+    columns: [
+      { key: "company_name", label: "Exhibitor / Company", editable: false },
+      { key: "request_type", label: "Service Type", type: "select", options: SERVICE_REQUEST_TYPES },
+      { key: "description", label: "Description" },
+      { key: "requested_date", label: "Requested Date" },
+      { key: "created_at", label: "Raised On", type: "date", editable: false },
+    ],
+  },
 };
 
 function getTypeConfig(type) {
@@ -239,6 +291,20 @@ const FROM_OVERRIDES = {
     FROM exhibitor_booking eb
     LEFT JOIN stalls s ON s.exhibitor_booking_id = eb.id
   ) AS exhibitor_booking`,
+  // Task 6/7: payments and service_requests each belong to one exhibitor —
+  // pull the company name in via this join so the list/export/search
+  // don't need a second round trip. Real INSERT/UPDATE/DELETE still target
+  // the plain `payments` / `service_requests` tables (see cfg.table).
+  payments: `(
+    SELECT p.*, eb.company_name, eb.contact_email, eb.contact_mobile_number
+    FROM payments p
+    LEFT JOIN exhibitor_booking eb ON eb.id = p.exhibitor_booking_id
+  ) AS payments`,
+  service_requests: `(
+    SELECT sr.*, eb.company_name, eb.contact_email, eb.contact_mobile_number
+    FROM service_requests sr
+    LEFT JOIN exhibitor_booking eb ON eb.id = sr.exhibitor_booking_id
+  ) AS service_requests`,
 };
 function fromClause(cfg) {
   return FROM_OVERRIDES[cfg.table] || cfg.table;
@@ -1122,6 +1188,191 @@ app.post("/api/exhibitor-booking/:id/unallot-stall", requireAuth, async (req, re
   } catch (err) {
     console.error("unallot stall failed:", err.message);
     res.status(500).json({ error: "Could not unallot stall." });
+  }
+});
+
+// ---------------------------------------------------------------------
+// Task 6: Payments — manual "record a payment" entry point. Everything
+// else about Payments (list/search/status/edit/delete/export) is handled
+// generically below via TYPE_CONFIG.payments + /api/records/:type.
+// ---------------------------------------------------------------------
+app.post("/api/payments", requireAuth, async (req, res) => {
+  const { exhibitorBookingId, amount, payment_mode, transaction_reference, payment_date, remarks } = req.body || {};
+  if (!exhibitorBookingId) return res.status(400).json({ error: "Select an exhibitor first." });
+  const amountNum = parseFloat(amount);
+  if (!Number.isFinite(amountNum) || amountNum <= 0) return res.status(400).json({ error: "Enter a valid amount." });
+
+  try {
+    const exhibitorCheck = await pool.query(`SELECT id FROM exhibitor_booking WHERE id = $1`, [exhibitorBookingId]);
+    if (exhibitorCheck.rowCount === 0) return res.status(404).json({ error: "Exhibitor not found." });
+
+    const inserted = await pool.query(
+      `INSERT INTO payments (exhibitor_booking_id, amount, payment_mode, transaction_reference, payment_date, remarks)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+      [
+        exhibitorBookingId,
+        amountNum,
+        payment_mode || null,
+        transaction_reference || null,
+        payment_date || null,
+        remarks || null,
+      ]
+    );
+    // Re-select through the same join used by the list view so the row
+    // shape returned here matches what a page refresh would show.
+    const result = await pool.query(
+      `SELECT p.*, eb.company_name, eb.contact_email, eb.contact_mobile_number
+       FROM payments p LEFT JOIN exhibitor_booking eb ON eb.id = p.exhibitor_booking_id
+       WHERE p.id = $1`,
+      [inserted.rows[0].id]
+    );
+    res.json({ success: true, row: result.rows[0] });
+  } catch (err) {
+    console.error("create payment failed:", err.message);
+    res.status(500).json({ error: "Could not record payment." });
+  }
+});
+
+// ---------------------------------------------------------------------
+// Task 7: Service Request Forms — same "manual add" pattern as Payments.
+// ---------------------------------------------------------------------
+app.post("/api/service-requests", requireAuth, async (req, res) => {
+  const { exhibitorBookingId, request_type, description, requested_date } = req.body || {};
+  if (!exhibitorBookingId) return res.status(400).json({ error: "Select an exhibitor first." });
+  if (!request_type || !String(request_type).trim()) return res.status(400).json({ error: "Select a service type." });
+
+  try {
+    const exhibitorCheck = await pool.query(`SELECT id FROM exhibitor_booking WHERE id = $1`, [exhibitorBookingId]);
+    if (exhibitorCheck.rowCount === 0) return res.status(404).json({ error: "Exhibitor not found." });
+
+    const inserted = await pool.query(
+      `INSERT INTO service_requests (exhibitor_booking_id, request_type, description, requested_date)
+       VALUES ($1, $2, $3, $4) RETURNING id`,
+      [exhibitorBookingId, request_type, description || null, requested_date || null]
+    );
+    const result = await pool.query(
+      `SELECT sr.*, eb.company_name, eb.contact_email, eb.contact_mobile_number
+       FROM service_requests sr LEFT JOIN exhibitor_booking eb ON eb.id = sr.exhibitor_booking_id
+       WHERE sr.id = $1`,
+      [inserted.rows[0].id]
+    );
+    res.json({ success: true, row: result.rows[0] });
+  } catch (err) {
+    console.error("create service request failed:", err.message);
+    res.status(500).json({ error: "Could not save service request." });
+  }
+});
+
+// ---------------------------------------------------------------------
+// Task 8: Analytics
+// ---------------------------------------------------------------------
+
+// GET /api/analytics/exhibitors — Space Booking summary: totals, area,
+// amounts (from exhibitor_booking + payments), and breakdowns by
+// participation category / country / state / product-sector / trend.
+app.get("/api/analytics/exhibitors", requireAuth, async (req, res) => {
+  try {
+    const [totals, paid, participation, country, state, trend] = await Promise.all([
+      pool.query(
+        `SELECT COUNT(*)::int AS total,
+                COALESCE(SUM(stall_size_sqm), 0)::float AS area_sqm,
+                COALESCE(SUM(total_payable), 0)::float AS total_amount
+         FROM exhibitor_booking`
+      ),
+      pool.query(`SELECT COALESCE(SUM(amount), 0)::float AS paid FROM payments WHERE status = 'Approved'`),
+      pool.query(
+        `SELECT COALESCE(NULLIF(TRIM(participation_category), ''), 'Not specified') AS label, COUNT(*)::int AS count
+         FROM exhibitor_booking GROUP BY 1 ORDER BY count DESC`
+      ),
+      pool.query(
+        `SELECT COALESCE(NULLIF(TRIM(billing_country), ''), 'Not specified') AS label, COUNT(*)::int AS count
+         FROM exhibitor_booking GROUP BY 1 ORDER BY count DESC LIMIT 10`
+      ),
+      pool.query(
+        `SELECT COALESCE(NULLIF(TRIM(billing_state), ''), 'Not specified') AS label, COUNT(*)::int AS count
+         FROM exhibitor_booking WHERE billing_country ILIKE 'india' GROUP BY 1 ORDER BY count DESC LIMIT 10`
+      ),
+      pool.query(
+        `SELECT TO_CHAR(created_at, 'YYYY-MM-DD') AS label, COUNT(*)::int AS count
+         FROM exhibitor_booking GROUP BY 1 ORDER BY 1`
+      ),
+    ]);
+
+    // product_categories is stored per-exhibitor as a small structured
+    // field on the registration site — its exact type can vary, so this
+    // is wrapped separately: if it isn't a JSON array on this database,
+    // skip the sector chart instead of failing the whole page.
+    let bySector = null;
+    try {
+      const sectorResult = await pool.query(
+        `SELECT COALESCE(NULLIF(TRIM(value::text), ''), 'Other') AS label, COUNT(*)::int AS count
+         FROM exhibitor_booking,
+              LATERAL jsonb_array_elements_text(
+                CASE WHEN jsonb_typeof(product_categories::jsonb) = 'array'
+                     THEN product_categories::jsonb ELSE '[]'::jsonb END
+              ) AS value
+         GROUP BY 1 ORDER BY count DESC LIMIT 12`
+      );
+      bySector = sectorResult.rows.map((r) => ({ label: r.label, count: parseInt(r.count, 10) }));
+    } catch (sectorErr) {
+      bySector = null;
+    }
+
+    const totalAmount = parseFloat(totals.rows[0].total_amount) || 0;
+    const paidAmount = parseFloat(paid.rows[0].paid) || 0;
+
+    res.json({
+      totals: {
+        totalExhibitors: totals.rows[0].total,
+        areaSqm: parseFloat(totals.rows[0].area_sqm) || 0,
+        totalAmount,
+        paidAmount,
+        outstandingAmount: Math.max(totalAmount - paidAmount, 0),
+      },
+      byParticipation: participation.rows.map((r) => ({ label: r.label, count: parseInt(r.count, 10) })),
+      byCountry: country.rows.map((r) => ({ label: r.label, count: parseInt(r.count, 10) })),
+      byState: state.rows.map((r) => ({ label: r.label, count: parseInt(r.count, 10) })),
+      bySector,
+      trend: trend.rows.map((r) => ({ label: r.label, count: parseInt(r.count, 10) })),
+    });
+  } catch (err) {
+    console.error("exhibitor analytics failed:", err.message);
+    res.status(500).json({ error: "Could not load exhibitor analytics." });
+  }
+});
+
+// GET /api/analytics/buyers — Domestic Buyers summary: totals by status,
+// country breakdown, registration trend.
+app.get("/api/analytics/buyers", requireAuth, async (req, res) => {
+  try {
+    const [statusBreakdown, country, trend] = await Promise.all([
+      pool.query(`SELECT status, COUNT(*)::int AS count FROM visitors WHERE interest_type = 'Buyer' GROUP BY status`),
+      pool.query(
+        `SELECT COALESCE(NULLIF(TRIM(country), ''), 'Not specified') AS label, COUNT(*)::int AS count
+         FROM visitors WHERE interest_type = 'Buyer' GROUP BY 1 ORDER BY count DESC LIMIT 10`
+      ),
+      pool.query(
+        `SELECT TO_CHAR(created_at, 'YYYY-MM-DD') AS label, COUNT(*)::int AS count
+         FROM visitors WHERE interest_type = 'Buyer' GROUP BY 1 ORDER BY 1`
+      ),
+    ]);
+    const byStatus = {};
+    STATUSES.forEach((s) => (byStatus[s] = 0));
+    let total = 0;
+    statusBreakdown.rows.forEach((row) => {
+      const count = parseInt(row.count, 10);
+      if (byStatus[row.status] !== undefined) byStatus[row.status] = count;
+      total += count;
+    });
+
+    res.json({
+      totals: { totalBuyers: total, byStatus },
+      byCountry: country.rows.map((r) => ({ label: r.label, count: parseInt(r.count, 10) })),
+      trend: trend.rows.map((r) => ({ label: r.label, count: parseInt(r.count, 10) })),
+    });
+  } catch (err) {
+    console.error("buyer analytics failed:", err.message);
+    res.status(500).json({ error: "Could not load buyer analytics." });
   }
 });
 
