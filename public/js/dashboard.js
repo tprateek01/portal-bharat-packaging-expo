@@ -2178,6 +2178,10 @@
       const d = new Date(value);
       return isNaN(d) ? String(value) : d.toLocaleString();
     }
+    if (type === "date-only") {
+      const d = new Date(value);
+      return isNaN(d) ? String(value) : d.toLocaleDateString();
+    }
     if (type === "boolean") return value ? "Yes" : "No";
     if (Array.isArray(value)) return value.join(", ");
     if (typeof value === "object") return JSON.stringify(value);
