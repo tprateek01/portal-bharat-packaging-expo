@@ -297,8 +297,8 @@
       card.appendChild(bars);
 
       card.addEventListener("click", () => {
-        renderNav();
         showRecordsView(t.key);
+        renderNav();
       });
 
       grid.appendChild(card);
@@ -319,8 +319,8 @@
     overviewBtn.className = "nav-item" + (currentType === OVERVIEW_KEY ? " active" : "");
     overviewBtn.textContent = "Overview";
     overviewBtn.addEventListener("click", () => {
-      renderNav();
       showOverview();
+      renderNav();
     });
     navList.appendChild(overviewBtn);
 
@@ -382,7 +382,6 @@
     }
 
     btn.addEventListener("click", () => {
-      renderNav();
       if (t.custom === "bulkUpload") {
         showBulkUpload();
       } else if (t.custom === "hallStall") {
@@ -396,6 +395,7 @@
       } else {
         showRecordsView(t.key);
       }
+      renderNav();
     });
     return btn;
   }
