@@ -1272,11 +1272,27 @@ app.post("/api/service-requests", requireAuth, async (req, res) => {
 // participation category / country / state / product-sector / trend.
 app.get("/api/analytics/exhibitors", requireAuth, async (req, res) => {
   try {
-    const [totals, paid, participation, country, state, trend] = await Promise.all([
+    // exhibitor_booking is owned by the external registration site, not
+    // this codebase — its numeric-looking fields (stall_size_sqm,
+    // total_payable) aren't guaranteed to be clean numbers on every row
+    // (blank/garbled values slip through free-text registration forms).
+    // Strip anything that isn't a digit/dot/minus before casting, so a
+    // stray non-numeric value degrades to "0" for that row instead of
+    // throwing and failing the whole SUM().
+    const safeNumeric = (col) => `NULLIF(regexp_replace(${col}::text, '[^0-9.\\-]', '', 'g'), '')::numeric`;
+
+    // Six independent queries used to run inside a single Promise.all,
+    // so a single bad query (e.g. one row with unparseable data) failed
+    // ALL of them and the whole panel showed "Could not load exhibitor
+    // analytics." with no indication which query broke. Promise.allSettled
+    // lets each section degrade independently — one broken chart doesn't
+    // blank the rest — and logs which query failed for easier debugging.
+    const labels = ["totals", "paid", "participation", "country", "state", "trend"];
+    const results = await Promise.allSettled([
       pool.query(
         `SELECT COUNT(*)::int AS total,
-                COALESCE(SUM(stall_size_sqm), 0)::float AS area_sqm,
-                COALESCE(SUM(total_payable), 0)::float AS total_amount
+                COALESCE(SUM(${safeNumeric("stall_size_sqm")}), 0)::float AS area_sqm,
+                COALESCE(SUM(${safeNumeric("total_payable")}), 0)::float AS total_amount
          FROM exhibitor_booking`
       ),
       pool.query(`SELECT COALESCE(SUM(amount), 0)::float AS paid FROM payments WHERE status = 'Approved'`),
@@ -1297,6 +1313,17 @@ app.get("/api/analytics/exhibitors", requireAuth, async (req, res) => {
          FROM exhibitor_booking GROUP BY 1 ORDER BY 1`
       ),
     ]);
+
+    results.forEach((r, i) => {
+      if (r.status === "rejected") {
+        console.error(`exhibitor analytics: "${labels[i]}" query failed:`, r.reason && r.reason.message);
+      }
+    });
+
+    const emptyRows = { rows: [] };
+    const [totals, paid, participation, country, state, trend] = results.map((r, i) =>
+      r.status === "fulfilled" ? r.value : i === 0 ? { rows: [{ total: 0, area_sqm: 0, total_amount: 0 }] } : i === 1 ? { rows: [{ paid: 0 }] } : emptyRows
+    );
 
     // product_categories is stored per-exhibitor as a small structured
     // field on the registration site — its exact type can vary, so this
@@ -1345,7 +1372,8 @@ app.get("/api/analytics/exhibitors", requireAuth, async (req, res) => {
 // country breakdown, registration trend.
 app.get("/api/analytics/buyers", requireAuth, async (req, res) => {
   try {
-    const [statusBreakdown, country, trend] = await Promise.all([
+    const buyerLabels = ["statusBreakdown", "country", "trend"];
+    const buyerResults = await Promise.allSettled([
       pool.query(`SELECT status, COUNT(*)::int AS count FROM visitors WHERE interest_type = 'Buyer' GROUP BY status`),
       pool.query(
         `SELECT COALESCE(NULLIF(TRIM(country), ''), 'Not specified') AS label, COUNT(*)::int AS count
@@ -1356,6 +1384,12 @@ app.get("/api/analytics/buyers", requireAuth, async (req, res) => {
          FROM visitors WHERE interest_type = 'Buyer' GROUP BY 1 ORDER BY 1`
       ),
     ]);
+    buyerResults.forEach((r, i) => {
+      if (r.status === "rejected") {
+        console.error(`buyer analytics: "${buyerLabels[i]}" query failed:`, r.reason && r.reason.message);
+      }
+    });
+    const [statusBreakdown, country, trend] = buyerResults.map((r) => (r.status === "fulfilled" ? r.value : { rows: [] }));
     const byStatus = {};
     STATUSES.forEach((s) => (byStatus[s] = 0));
     let total = 0;
