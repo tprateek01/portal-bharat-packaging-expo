@@ -6,7 +6,7 @@ const pool = require("../db");
 
 async function main() {
   const sql = fs.readFileSync(path.join(__dirname, "schema.sql"), "utf8");
-  console.log("Adding status columns to visitors, exhibitor_eoi, exhibitor_booking...");
+  console.log("Adding status columns to visitors, exhibitor_eoi, exhibitor_booking, and creating bulk_uploads table...");
   try {
     await pool.query(sql);
     console.log("Done. Your existing data is untouched — every row now defaults to status = 'Registered'.");

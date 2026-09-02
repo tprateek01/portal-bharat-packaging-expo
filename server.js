@@ -4,6 +4,8 @@ const crypto = require("crypto");
 const express = require("express");
 const cookieParser = require("cookie-parser");
 const jwt = require("jsonwebtoken");
+const multer = require("multer");
+const ExcelJS = require("exceljs");
 const pool = require("./db");
 
 const app = express();
@@ -91,8 +93,8 @@ const INDIAN_STATES = [
 const TYPE_CONFIG = {
   visitors_buyers: {
     table: "visitors",
-    label: "Buyers",
-    group: "Visitors",
+    label: "All Buyers",
+    group: "Domestic Buyers",
     fixedFilter: { column: "interest_type", value: "Buyer" },
     searchable: ["full_name", "company_name", "email", "mobile_number"],
     filters: { country: "country" },
@@ -108,8 +110,7 @@ const TYPE_CONFIG = {
   },
   visitors_delegates: {
     table: "visitors",
-    label: "Delegates",
-    group: "Visitors",
+    label: "General Visitors",
     fixedFilter: { column: "interest_type", value: "Delegate" },
     searchable: ["full_name", "company_name", "email", "mobile_number"],
     filters: { country: "country" },
@@ -142,7 +143,8 @@ const TYPE_CONFIG = {
   },
   exhibitor_booking: {
     table: "exhibitor_booking",
-    label: "Exhibitor Booking",
+    label: "Exhibitors",
+    group: "Space Booking",
     searchable: [
       "company_name",
       "corporate_email",
@@ -386,6 +388,247 @@ function handleDuplicateError(err, res) {
   }
   return false;
 }
+
+// ---------------------------------------------------------------------
+// Domestic Buyers — Bulk Upload (.xlsx)
+// ---------------------------------------------------------------------
+
+// Memory storage only — this app runs as a stateless serverless function
+// on Vercel, so there's no durable disk to write to. The whole file is
+// parsed straight out of the uploaded buffer.
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
+  fileFilter: (req, file, cb) => {
+    const okExt = /\.xlsx$/i.test(file.originalname);
+    const okMime = [
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "application/octet-stream", // some browsers send this for .xlsx
+    ].includes(file.mimetype);
+    if (okExt && okMime) return cb(null, true);
+    cb(new Error("Only .xlsx files are supported."));
+  },
+});
+
+// Column order here is also the exact column order of the downloadable
+// template, so a file the admin exports and re-uploads always lines up.
+const BUYER_UPLOAD_COLUMNS = [
+  { header: "Full Name", key: "full_name", required: true },
+  { header: "Company Name", key: "company_name", required: false },
+  { header: "Designation", key: "designation", required: false },
+  { header: "Mobile Number", key: "mobile_number", required: true },
+  { header: "Email", key: "email", required: true },
+  { header: "Country", key: "country", required: false },
+];
+
+function normalizeHeader(str) {
+  return String(str ?? "").trim().toLowerCase().replace(/[\s_]+/g, "");
+}
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const MOBILE_RE = /^[0-9+\-\s()]{7,15}$/;
+
+// GET /api/domestic-buyers/bulk-upload/template — downloadable .xlsx
+// with the exact headers this endpoint expects, so admins don't have to
+// guess column names.
+app.get("/api/domestic-buyers/bulk-upload/template", requireAuth, async (req, res) => {
+  try {
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet("Domestic Buyers");
+    sheet.columns = BUYER_UPLOAD_COLUMNS.map((c) => ({ header: c.header, key: c.key, width: 24 }));
+    sheet.getRow(1).font = { bold: true };
+    // One example row so the expected format is obvious, not just labels.
+    sheet.addRow({
+      full_name: "Raju Kumar Jaiswal",
+      company_name: "Govind Food Products",
+      designation: "Owner",
+      mobile_number: "9935268221",
+      email: "raju@example.com",
+      country: "India",
+    });
+
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", 'attachment; filename="domestic_buyer_bulk_upload_template.xlsx"');
+    await workbook.xlsx.write(res);
+    res.end();
+  } catch (err) {
+    console.error("template generation failed:", err.message);
+    res.status(500).json({ error: "Could not generate template." });
+  }
+});
+
+// GET /api/domestic-buyers/bulk-uploads — upload history for the panel
+// on the right of the Bulk Upload page.
+app.get("/api/domestic-buyers/bulk-uploads", requireAuth, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT id, filename, uploaded_by, total_rows, success_count, failed_count, status, created_at
+       FROM bulk_uploads WHERE upload_type = 'domestic_buyers'
+       ORDER BY created_at DESC LIMIT 25`
+    );
+    res.json({ uploads: result.rows });
+  } catch (err) {
+    console.error("list bulk_uploads failed:", err.message);
+    res.status(500).json({ error: "Could not load upload history." });
+  }
+});
+
+// GET /api/domestic-buyers/bulk-uploads/:id/failure-report — CSV of the
+// rows that failed to import for a given upload run.
+app.get("/api/domestic-buyers/bulk-uploads/:id/failure-report", requireAuth, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT filename, failure_report FROM bulk_uploads WHERE id = $1 AND upload_type = 'domestic_buyers'`,
+      [req.params.id]
+    );
+    if (result.rowCount === 0) return res.status(404).json({ error: "Upload not found." });
+    const { failure_report: failures } = result.rows[0];
+    const lines = ["Row,Reason"];
+    (failures || []).forEach((f) => {
+      lines.push(`${f.row},"${String(f.reason).replace(/"/g, '""')}"`);
+    });
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="bulk_upload_${req.params.id}_failures.csv"`);
+    res.send("\uFEFF" + lines.join("\n"));
+  } catch (err) {
+    console.error("failure report failed:", err.message);
+    res.status(500).json({ error: "Could not generate failure report." });
+  }
+});
+
+// POST /api/domestic-buyers/bulk-upload — parses the uploaded .xlsx,
+// validates + inserts each row into visitors (interest_type='Buyer'),
+// and logs a run summary (+ per-row failure reasons) into bulk_uploads.
+app.post("/api/domestic-buyers/bulk-upload", requireAuth, (req, res) => {
+  upload.single("file")(req, res, async (uploadErr) => {
+    if (uploadErr) return res.status(400).json({ error: uploadErr.message });
+    if (!req.file) return res.status(400).json({ error: "No file was uploaded." });
+
+    try {
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.load(req.file.buffer);
+      const sheet = workbook.worksheets[0];
+      if (!sheet) return res.status(400).json({ error: "The file has no sheets." });
+
+      // Map whatever header text is actually in row 1 to our known
+      // columns, tolerant of case/spacing differences (e.g. "mobile_number"
+      // vs "Mobile Number").
+      const headerRow = sheet.getRow(1);
+      const colIndexByKey = {};
+      headerRow.eachCell((cell, colNumber) => {
+        const norm = normalizeHeader(cell.value);
+        const match = BUYER_UPLOAD_COLUMNS.find((c) => normalizeHeader(c.header) === norm || c.key === norm);
+        if (match) colIndexByKey[match.key] = colNumber;
+      });
+      const missingRequired = BUYER_UPLOAD_COLUMNS.filter((c) => c.required && !colIndexByKey[c.key]);
+      if (missingRequired.length > 0) {
+        return res.status(400).json({
+          error: `File is missing required column(s): ${missingRequired.map((c) => c.header).join(", ")}. Use "Download Template" to get the exact format.`,
+        });
+      }
+
+      const MAX_ROWS = 1000; // keeps a single upload well inside a serverless function's execution time budget
+      const dataRowCount = sheet.rowCount - 1;
+      if (dataRowCount > MAX_ROWS) {
+        return res.status(400).json({ error: `This file has ${dataRowCount} rows. Please split it into batches of ${MAX_ROWS} or fewer.` });
+      }
+
+      let successCount = 0;
+      const failures = [];
+
+      for (let rowNumber = 2; rowNumber <= sheet.rowCount; rowNumber++) {
+        const row = sheet.getRow(rowNumber);
+        // Skip fully blank rows (common at the end of a sheet) without
+        // counting them as failures.
+        if (row.cellCount === 0 || row.values.every((v) => v === null || v === undefined || v === "")) continue;
+
+        const getCell = (key) => {
+          const idx = colIndexByKey[key];
+          if (!idx) return "";
+          const val = row.getCell(idx).value;
+          if (val === null || val === undefined) return "";
+          // ExcelJS returns { text } for rich text and { result } for formulas
+          if (typeof val === "object") return String(val.text ?? val.result ?? "").trim();
+          return String(val).trim();
+        };
+
+        const record = {
+          full_name: getCell("full_name"),
+          company_name: getCell("company_name"),
+          designation: getCell("designation"),
+          mobile_number: getCell("mobile_number"),
+          email: getCell("email"),
+          country: getCell("country"),
+        };
+
+        if (!record.full_name || !record.mobile_number || !record.email) {
+          failures.push({ row: rowNumber, reason: "Full Name, Mobile Number and Email are required." });
+          continue;
+        }
+        if (!EMAIL_RE.test(record.email)) {
+          failures.push({ row: rowNumber, reason: `Invalid email: "${record.email}"` });
+          continue;
+        }
+        if (!MOBILE_RE.test(record.mobile_number)) {
+          failures.push({ row: rowNumber, reason: `Invalid mobile number: "${record.mobile_number}"` });
+          continue;
+        }
+
+        try {
+          await pool.query(
+            `INSERT INTO visitors (full_name, company_name, designation, mobile_number, email, country, interest_type, status)
+             VALUES ($1, $2, $3, $4, $5, $6, 'Buyer', 'Registered')`,
+            [
+              record.full_name,
+              record.company_name || null,
+              record.designation || null,
+              record.mobile_number,
+              record.email,
+              record.country || null,
+            ]
+          );
+          successCount += 1;
+        } catch (err) {
+          if (err.code === "23505") {
+            failures.push({ row: rowNumber, reason: "A buyer with this email or mobile number is already registered." });
+          } else {
+            failures.push({ row: rowNumber, reason: "Could not save this row — please check its data." });
+          }
+        }
+      }
+
+      const totalRows = successCount + failures.length;
+      const logResult = await pool.query(
+        `INSERT INTO bulk_uploads (upload_type, filename, uploaded_by, total_rows, success_count, failed_count, status, failure_report)
+         VALUES ('domestic_buyers', $1, $2, $3, $4, $5, $6, $7)
+         RETURNING id, filename, uploaded_by, total_rows, success_count, failed_count, status, created_at`,
+        [
+          req.file.originalname,
+          req.admin?.username || null,
+          totalRows,
+          successCount,
+          failures.length,
+          failures.length === 0 ? "Completed" : "Completed with errors",
+          JSON.stringify(failures),
+        ]
+      );
+
+      res.json({
+        success: true,
+        totalRows,
+        successCount,
+        failedCount: failures.length,
+        upload: logResult.rows[0],
+        // sendEmail is accepted but not acted on yet — actual registration
+        // emails need SMTP credentials to be configured first.
+        emailRequested: req.body.sendEmail === "true",
+      });
+    } catch (err) {
+      console.error("bulk upload failed:", err.message);
+      res.status(500).json({ error: "Could not process the file. Make sure it's a valid .xlsx file matching the template." });
+    }
+  });
+});
 
 // ---------------------------------------------------------------------
 // Data APIs (all protected)

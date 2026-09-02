@@ -261,6 +261,19 @@ button.primary-btn:disabled { opacity: 0.6; cursor: not-allowed; }
   background: var(--brand-pink-dark);
 }
 .sidebar .nav-item.nested { padding-left: 26px; font-weight: 500; font-size: 0.86rem; }
+.sidebar .nav-item span:first-child { flex: 1; }
+.nav-soon-badge {
+  flex: 0 0 auto;
+  background: var(--warn-bg);
+  color: var(--warn);
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 999px;
+}
+.sidebar .nav-item.active .nav-soon-badge { background: rgba(255, 255, 255, 0.25); color: #fff; }
 
 /* Group toggle (e.g. "Visitors") — same base look as a normal nav item,
    just with a chevron pushed to the right that rotates on expand. */
@@ -633,6 +646,154 @@ table.data-table tr:last-child td { border-bottom: none; }
 .overview-bar-fill.status-Rejected { background: var(--error); }
 .overview-bar-fill.status-Inactive { background: var(--muted); }
 .overview-bar-count { font-size: 0.78rem; color: var(--ink); font-weight: 700; text-align: right; }
+
+/* ---------- Domestic Buyer Bulk Upload page ---------- */
+.bulk-upload-layout {
+  display: grid;
+  grid-template-columns: 1.6fr 1fr;
+  gap: 20px;
+  align-items: start;
+}
+.bulk-upload-main, .bulk-upload-history {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+}
+.bulk-upload-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+.bulk-upload-toolbar-label { font-weight: 700; font-size: 0.92rem; }
+button.template-btn {
+  background: var(--ink);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-weight: 700;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+button.template-btn:hover { opacity: 0.9; }
+
+.dropzone {
+  border: 2px dashed var(--border);
+  border-radius: var(--radius);
+  padding: 40px 20px;
+  text-align: center;
+  cursor: pointer;
+  background: var(--bg);
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.dropzone:hover, .dropzone.dragover { border-color: var(--brand-pink); background: var(--brand-pink-bg); }
+.dropzone-icon { font-size: 1.8rem; margin-bottom: 8px; }
+.dropzone-title { font-weight: 700; font-size: 0.95rem; margin-bottom: 4px; }
+.dropzone-sub { color: var(--muted); font-size: 0.82rem; }
+.dropzone-browse { color: var(--brand-pink); font-weight: 700; text-decoration: underline; }
+.dropzone-hint { text-align: center; color: var(--muted); font-size: 0.74rem; margin-top: 8px; }
+
+.selected-file-row {
+  margin-top: 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.85rem;
+}
+.selected-file-name { font-weight: 600; }
+.selected-file-size { color: var(--muted); font-weight: 500; }
+.selected-file-error { color: var(--error); font-weight: 600; }
+.selected-file-remove {
+  border: none; background: none; color: var(--muted); cursor: pointer;
+  font-size: 0.9rem; padding: 2px 6px;
+}
+.selected-file-remove:hover { color: var(--error); }
+
+.send-email-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+  font-size: 0.85rem;
+  color: var(--ink);
+  cursor: pointer;
+}
+.send-email-toggle input { width: 16px; height: 16px; cursor: pointer; }
+
+button.upload-submit-btn {
+  margin-top: 18px;
+  width: 100%;
+  background: var(--brand-pink);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 12px;
+  font-weight: 700;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+button.upload-submit-btn:hover:not(:disabled) { background: var(--brand-pink-dark); }
+button.upload-submit-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.upload-result {
+  margin-top: 16px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+.upload-result.success { background: var(--success-bg); color: var(--success); }
+.upload-result.has-errors { background: var(--warn-bg); color: var(--warn); }
+.upload-result-fail-line { margin-top: 4px; }
+.upload-result a { color: inherit; font-weight: 700; text-decoration: underline; }
+
+.bulk-upload-history h3 { margin: 0 0 14px; font-size: 0.95rem; }
+.upload-history-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  font-size: 0.8rem;
+}
+.upload-history-card:last-child { margin-bottom: 0; }
+.upload-history-name { font-weight: 700; font-size: 0.85rem; margin-bottom: 4px; word-break: break-all; }
+.upload-history-meta { color: var(--muted); margin-bottom: 4px; }
+.upload-history-status {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  margin-bottom: 4px;
+}
+.upload-history-status.success { background: var(--success-bg); color: var(--success); }
+.upload-history-status.has-errors { background: var(--warn-bg); color: var(--warn); }
+.upload-history-counts { color: var(--ink); font-weight: 600; margin-bottom: 6px; }
+.upload-history-download { color: var(--brand-pink); font-weight: 700; text-decoration: none; font-size: 0.78rem; }
+.upload-history-download:hover { text-decoration: underline; }
+
+@media (max-width: 900px) {
+  .bulk-upload-layout { grid-template-columns: 1fr; }
+}
+
+/* ---------- "Coming soon" placeholder panel ---------- */
+.coming-soon-card {
+  background: #fff;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  padding: 48px 24px;
+  text-align: center;
+  color: var(--muted);
+}
+.coming-soon-icon { font-size: 2rem; margin-bottom: 10px; }
+.coming-soon-card h2 { margin: 0 0 8px; font-size: 1.1rem; color: var(--ink); }
+.coming-soon-card p { margin: 0; font-size: 0.88rem; max-width: 420px; margin-left: auto; margin-right: auto; line-height: 1.5; }
 
 @media (max-width: 800px) {
   .sidebar { display: none; }

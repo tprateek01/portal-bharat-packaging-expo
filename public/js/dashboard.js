@@ -65,6 +65,8 @@
   const exportBtn = document.getElementById("exportBtn");
   const searchSummaryEl = document.getElementById("searchSummary");
   const overviewArea = document.getElementById("overviewArea");
+  const comingSoonArea = document.getElementById("comingSoonArea");
+  const bulkUploadArea = document.getElementById("bulkUploadArea");
   const recordsView = document.getElementById("recordsView");
   const modalBackdrop = document.getElementById("modalBackdrop");
   const modalBody = document.getElementById("modalBody");
@@ -134,6 +136,8 @@
   function showOverview() {
     currentType = OVERVIEW_KEY;
     overviewArea.style.display = "block";
+    comingSoonArea.style.display = "none";
+    bulkUploadArea.style.display = "none";
     recordsView.style.display = "none";
     exportBtn.style.display = "none";
     pageTitle.textContent = "Overview";
@@ -146,6 +150,8 @@
     currentPage = 1;
     filterValues = {};
     overviewArea.style.display = "none";
+    comingSoonArea.style.display = "none";
+    bulkUploadArea.style.display = "none";
     recordsView.style.display = "block";
     exportBtn.style.display = "";
     renderStatusTabs();
@@ -217,11 +223,68 @@
     overviewArea.appendChild(grid);
   }
 
+  // ---- Sidebar navigation layout ----
+  // This array is the single source of truth for sidebar structure/order —
+  // deliberately decoupled from TYPE_CONFIG on the server, so we can lay
+  // the sidebar out exactly like the reference portal (Analytics / Space
+  // Booking / Domestic Buyers / General Visitors / Payments / Service
+  // Request Forms) even for sections whose backend isn't built yet.
+  //
+  // Each item is either:
+  //   { key: "<TYPE_CONFIG key>" }                 — a real, working section
+  //   { key: "...", label: "...", comingSoon: true, comingSoonNote: "..." }
+  //     — a placeholder for a section being built in a later task. Clicking
+  //     it shows a friendly "coming soon" panel instead of calling the API.
+  // `label` is optional for real items — it falls back to the label the
+  // server sent in /api/types, so renaming a section only needs a change
+  // in one place (server.js).
+  const NAV_LAYOUT = [
+    {
+      kind: "group",
+      name: "Analytics",
+      items: [
+        { key: "analytics_exhibitors", label: "Exhibitors", comingSoon: true, comingSoonNote: "Exhibitor charts & summary — coming in a later update." },
+        { key: "analytics_domestic_buyers", label: "Domestic Buyers", comingSoon: true, comingSoonNote: "Buyer charts & summary — coming in a later update." },
+      ],
+    },
+    {
+      kind: "group",
+      name: "Space Booking",
+      items: [
+        { key: "exhibitor_booking" },
+        { key: "hall_stall_management", label: "Hall & Stall Management", comingSoon: true, comingSoonNote: "Stall inventory (vacant/allotted, add & upload stalls) — coming in a later update." },
+      ],
+    },
+    {
+      kind: "group",
+      name: "Domestic Buyers",
+      items: [
+        { key: "visitors_buyers" },
+        { key: "domestic_buyer_bulk_upload", label: "Bulk Upload", custom: "bulkUpload" },
+      ],
+    },
+    { kind: "item", item: { key: "visitors_delegates" } },
+    { kind: "item", item: { key: "exhibitor_eoi" } },
+    { kind: "item", item: { key: "payments", label: "Payments", comingSoon: true, comingSoonNote: "Exhibitor payment records — coming in a later update." } },
+    { kind: "item", item: { key: "service_requests", label: "Service Request Forms", comingSoon: true, comingSoonNote: "Service requests raised by exhibitors — coming in a later update." } },
+  ];
+
+  // Resolves a NAV_LAYOUT entry against the live TYPES list from the
+  // server (for real sections) or keeps it as a placeholder/custom view.
+  function resolveNavItem(item) {
+    if (item.comingSoon || item.custom) return item;
+    const cfg = TYPES.find((t) => t.key === item.key);
+    // Defensive: if the server ever stops sending a key this file expects,
+    // fall back to a disabled-looking placeholder instead of throwing.
+    if (!cfg) return { ...item, label: item.label || item.key, comingSoon: true, comingSoonNote: "This section isn't available right now." };
+    return { key: item.key, label: item.label || cfg.label, comingSoon: false };
+  }
+
   // ---- Sidebar ----
-  // Top-level entries (Visitors, Exhibitor EOI, Exhibitor Booking, …) all
-  // render with identical styling. Any entry backed by a "group" of types
-  // (e.g. Visitors -> Buyers/Delegates) becomes a toggle button with a
-  // chevron that expands to reveal its nested items.
+  // Top-level entries all render with identical styling. Any entry backed
+  // by a "group" (e.g. "Space Booking" -> Exhibitors/Hall & Stall
+  // Management) becomes a toggle button with a chevron that expands to
+  // reveal its nested items.
   function renderNav() {
     navList.innerHTML = "";
 
@@ -234,28 +297,14 @@
     });
     navList.appendChild(overviewBtn);
 
-    // Walk TYPES once, grouping consecutive same-group entries while
-    // preserving overall order (so groups can sit anywhere in the list).
-    const sections = [];
-    const seenGroups = new Set();
-    TYPES.forEach((t) => {
-      if (t.group) {
-        if (!seenGroups.has(t.group)) {
-          seenGroups.add(t.group);
-          sections.push({ kind: "group", name: t.group, items: TYPES.filter((x) => x.group === t.group) });
-        }
-      } else {
-        sections.push({ kind: "item", item: t });
-      }
-    });
-
-    sections.forEach((section) => {
+    NAV_LAYOUT.forEach((section) => {
       if (section.kind === "item") {
-        navList.appendChild(buildNavButton(section.item, false));
+        navList.appendChild(buildNavButton(resolveNavItem(section.item), false));
         return;
       }
 
-      const { name, items } = section;
+      const { name } = section;
+      const items = section.items.map(resolveNavItem);
       const hasActiveChild = items.some((it) => it.key === currentType);
       // Default a group open the first time it's rendered if it contains
       // the current page; afterwards, respect whatever the user toggled.
@@ -293,12 +342,232 @@
   function buildNavButton(t, nested) {
     const btn = document.createElement("button");
     btn.className = "nav-item" + (nested ? " nested" : "") + (t.key === currentType ? " active" : "");
-    btn.textContent = t.label;
+
+    const labelSpan = document.createElement("span");
+    labelSpan.textContent = t.label;
+    btn.appendChild(labelSpan);
+
+    if (t.comingSoon) {
+      const badge = document.createElement("span");
+      badge.className = "nav-soon-badge";
+      badge.textContent = "Soon";
+      btn.appendChild(badge);
+    }
+
     btn.addEventListener("click", () => {
       renderNav();
-      showRecordsView(t.key);
+      if (t.custom === "bulkUpload") {
+        showBulkUpload();
+      } else if (t.comingSoon) {
+        showComingSoon(t.key, t.label, t.comingSoonNote);
+      } else {
+        showRecordsView(t.key);
+      }
     });
     return btn;
+  }
+
+  // ---- Domestic Buyer Bulk Upload page ----
+  let selectedBulkFile = null;
+
+  function showBulkUpload() {
+    currentType = "domestic_buyer_bulk_upload";
+    overviewArea.style.display = "none";
+    comingSoonArea.style.display = "none";
+    recordsView.style.display = "none";
+    bulkUploadArea.style.display = "block";
+    exportBtn.style.display = "none";
+    pageTitle.textContent = "Domestic Buyer Bulk Upload";
+    selectedBulkFile = null;
+
+    bulkUploadArea.innerHTML = `
+      <div class="bulk-upload-layout">
+        <div class="bulk-upload-main">
+          <div class="bulk-upload-toolbar">
+            <span class="bulk-upload-toolbar-label">Upload</span>
+            <button type="button" class="template-btn" id="downloadTemplateBtn">⬇ Download Template</button>
+          </div>
+
+          <div class="dropzone" id="dropzone">
+            <div class="dropzone-icon">📤</div>
+            <div class="dropzone-title">Drop or Select file</div>
+            <div class="dropzone-sub">Drop files here or click <span class="dropzone-browse">browse</span> through your machine</div>
+            <input type="file" id="fileInput" accept=".xlsx" hidden />
+          </div>
+          <div class="dropzone-hint">Allowed *.xlsx, max size of 10 MB</div>
+
+          <div id="selectedFileRow" class="selected-file-row" style="display:none;"></div>
+
+          <label class="send-email-toggle">
+            <input type="checkbox" id="sendEmailToggle" />
+            <span>Send registration email to every buyer created from this file</span>
+          </label>
+
+          <button type="button" class="primary-btn upload-submit-btn" id="uploadSubmitBtn" disabled>Upload</button>
+
+          <div id="uploadResult" class="upload-result" style="display:none;"></div>
+        </div>
+
+        <div class="bulk-upload-history">
+          <h3>Uploads</h3>
+          <div id="uploadsListArea"><div class="loading-state">Loading…</div></div>
+        </div>
+      </div>
+    `;
+
+    const dropzone = document.getElementById("dropzone");
+    const fileInput = document.getElementById("fileInput");
+    const selectedFileRow = document.getElementById("selectedFileRow");
+    const uploadSubmitBtn = document.getElementById("uploadSubmitBtn");
+    const uploadResult = document.getElementById("uploadResult");
+    const sendEmailToggle = document.getElementById("sendEmailToggle");
+
+    document.getElementById("downloadTemplateBtn").addEventListener("click", () => {
+      window.location.href = "/api/domestic-buyers/bulk-upload/template";
+    });
+
+    dropzone.addEventListener("click", () => fileInput.click());
+    dropzone.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      dropzone.classList.add("dragover");
+    });
+    dropzone.addEventListener("dragleave", () => dropzone.classList.remove("dragover"));
+    dropzone.addEventListener("drop", (e) => {
+      e.preventDefault();
+      dropzone.classList.remove("dragover");
+      if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+        handleFileSelected(e.dataTransfer.files[0]);
+      }
+    });
+    fileInput.addEventListener("change", () => {
+      if (fileInput.files && fileInput.files[0]) handleFileSelected(fileInput.files[0]);
+    });
+
+    function handleFileSelected(file) {
+      uploadResult.style.display = "none";
+      if (!/\.xlsx$/i.test(file.name)) {
+        selectedFileRow.style.display = "flex";
+        selectedFileRow.innerHTML = `<span class="selected-file-error">"${escapeHtml(file.name)}" is not a .xlsx file. Please pick a .xlsx file.</span>`;
+        uploadSubmitBtn.disabled = true;
+        selectedBulkFile = null;
+        return;
+      }
+      if (file.size > 10 * 1024 * 1024) {
+        selectedFileRow.style.display = "flex";
+        selectedFileRow.innerHTML = `<span class="selected-file-error">File is larger than 10 MB.</span>`;
+        uploadSubmitBtn.disabled = true;
+        selectedBulkFile = null;
+        return;
+      }
+      selectedBulkFile = file;
+      selectedFileRow.style.display = "flex";
+      selectedFileRow.innerHTML = `
+        <span class="selected-file-name">📄 ${escapeHtml(file.name)} <span class="selected-file-size">(${(file.size / 1024).toFixed(1)} KB)</span></span>
+        <button type="button" class="selected-file-remove" id="removeFileBtn">✕</button>
+      `;
+      uploadSubmitBtn.disabled = false;
+      document.getElementById("removeFileBtn").addEventListener("click", (e) => {
+        e.stopPropagation();
+        selectedBulkFile = null;
+        fileInput.value = "";
+        selectedFileRow.style.display = "none";
+        uploadSubmitBtn.disabled = true;
+      });
+    }
+
+    uploadSubmitBtn.addEventListener("click", async () => {
+      if (!selectedBulkFile) return;
+      uploadSubmitBtn.disabled = true;
+      uploadSubmitBtn.textContent = "Uploading…";
+      uploadResult.style.display = "none";
+
+      const formData = new FormData();
+      formData.append("file", selectedBulkFile);
+      formData.append("sendEmail", sendEmailToggle.checked ? "true" : "false");
+
+      try {
+        const res = await apiFetch("/api/domestic-buyers/bulk-upload", { method: "POST", body: formData });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Upload failed.");
+
+        uploadResult.style.display = "block";
+        uploadResult.className = `upload-result ${data.failedCount > 0 ? "has-errors" : "success"}`;
+        uploadResult.innerHTML = `
+          <strong>${data.successCount} of ${data.totalRows} row${data.totalRows === 1 ? "" : "s"} imported successfully.</strong>
+          ${data.failedCount > 0 ? `<div class="upload-result-fail-line">${data.failedCount} row${data.failedCount === 1 ? "" : "s"} failed — <a href="/api/domestic-buyers/bulk-uploads/${data.upload.id}/failure-report">download failure report</a>.</div>` : ""}
+        `;
+
+        // Reset the picker for the next upload.
+        selectedBulkFile = null;
+        fileInput.value = "";
+        selectedFileRow.style.display = "none";
+        loadUploadsList();
+      } catch (err) {
+        uploadResult.style.display = "block";
+        uploadResult.className = "upload-result has-errors";
+        uploadResult.innerHTML = `<strong>${escapeHtml(err.message)}</strong>`;
+      } finally {
+        uploadSubmitBtn.disabled = !selectedBulkFile;
+        uploadSubmitBtn.textContent = "Upload";
+      }
+    });
+
+    loadUploadsList();
+  }
+
+  async function loadUploadsList() {
+    const area = document.getElementById("uploadsListArea");
+    if (!area) return; // page was navigated away from before this resolved
+    try {
+      const res = await apiFetch("/api/domestic-buyers/bulk-uploads");
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Could not load upload history.");
+      renderUploadsList(data.uploads);
+    } catch (err) {
+      area.innerHTML = `<div class="empty-state">${escapeHtml(err.message)}</div>`;
+    }
+  }
+
+  function renderUploadsList(uploads) {
+    const area = document.getElementById("uploadsListArea");
+    if (!area) return;
+    if (!uploads || uploads.length === 0) {
+      area.innerHTML = '<div class="empty-state">No uploads yet.</div>';
+      return;
+    }
+    area.innerHTML = "";
+    uploads.forEach((u) => {
+      const card = document.createElement("div");
+      card.className = "upload-history-card";
+      const statusClass = u.failed_count > 0 ? "has-errors" : "success";
+      const statusLabel = u.failed_count > 0 ? "COMPLETED WITH ERRORS" : "COMPLETED";
+      const dateStr = formatValue(u.created_at, "date");
+      card.innerHTML = `
+        <div class="upload-history-name">${escapeHtml(u.filename)}</div>
+        <div class="upload-history-meta">Uploaded by: ${escapeHtml(u.uploaded_by || "—")}</div>
+        <span class="upload-history-status ${statusClass}">${statusLabel}</span>
+        <div class="upload-history-meta">Date: ${escapeHtml(dateStr)}</div>
+        <div class="upload-history-counts">${u.success_count} imported${u.failed_count > 0 ? `, ${u.failed_count} failed` : ""} of ${u.total_rows}</div>
+        ${u.failed_count > 0 ? `<a class="upload-history-download" href="/api/domestic-buyers/bulk-uploads/${u.id}/failure-report">⬇ Failure report</a>` : ""}
+      `;
+      area.appendChild(card);
+    });
+  }
+  function showComingSoon(key, label, note) {
+    currentType = key;
+    overviewArea.style.display = "none";
+    recordsView.style.display = "none";
+    bulkUploadArea.style.display = "none";
+    comingSoonArea.style.display = "block";
+    exportBtn.style.display = "none";
+    pageTitle.textContent = label;
+    comingSoonArea.innerHTML = `
+      <div class="coming-soon-card">
+        <div class="coming-soon-icon">🚧</div>
+        <h2>${escapeHtml(label)} — Coming Soon</h2>
+        <p>${escapeHtml(note || "This section is being built and will be available in a future update.")}</p>
+      </div>
+    `;
   }
 
   // ---- Status tabs ----
