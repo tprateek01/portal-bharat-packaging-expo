@@ -109,6 +109,63 @@
   TYPES = meta.types;
   STATUSES = meta.statuses;
 
+  // ---- Sidebar navigation layout ----
+  // This array is the single source of truth for sidebar structure/order —
+  // deliberately decoupled from TYPE_CONFIG on the server, so we can lay
+  // the sidebar out exactly like the reference portal (Analytics / Space
+  // Booking / Domestic Buyers / General Visitors / Payments / Service
+  // Request Forms) even for sections whose backend isn't built yet.
+  //
+  // Each item is either:
+  //   { key: "<TYPE_CONFIG key>" }                 — a real, working section
+  //   { key: "...", label: "...", comingSoon: true, comingSoonNote: "..." }
+  //     — a placeholder for a section being built in a later task. Clicking
+  //     it shows a friendly "coming soon" panel instead of calling the API.
+  // `label` is optional for real items — it falls back to the label the
+  // server sent in /api/types, so renaming a section only needs a change
+  // in one place (server.js).
+  const NAV_LAYOUT = [
+    {
+      kind: "group",
+      name: "Analytics",
+      items: [
+        { key: "analytics_exhibitors", label: "Exhibitors", custom: "analyticsExhibitors" },
+        { key: "analytics_domestic_buyers", label: "Domestic Buyers", custom: "analyticsBuyers" },
+      ],
+    },
+    {
+      kind: "group",
+      name: "Space Booking",
+      items: [
+        { key: "exhibitor_booking" },
+        { key: "hall_stall_management", label: "Hall & Stall Management", custom: "hallStall" },
+      ],
+    },
+    {
+      kind: "group",
+      name: "Domestic Buyers",
+      items: [
+        { key: "visitors_buyers" },
+        { key: "domestic_buyer_bulk_upload", label: "Bulk Upload", custom: "bulkUpload" },
+      ],
+    },
+    { kind: "item", item: { key: "visitors_delegates" } },
+    { kind: "item", item: { key: "exhibitor_eoi" } },
+    { kind: "item", item: { key: "payments", label: "Payments" } },
+    { kind: "item", item: { key: "service_requests", label: "Service Request Forms" } },
+  ];
+
+  // Resolves a NAV_LAYOUT entry against the live TYPES list from the
+  // server (for real sections) or keeps it as a placeholder/custom view.
+  function resolveNavItem(item) {
+    if (item.comingSoon || item.custom) return item;
+    const cfg = TYPES.find((t) => t.key === item.key);
+    // Defensive: if the server ever stops sending a key this file expects,
+    // fall back to a disabled-looking placeholder instead of throwing.
+    if (!cfg) return { ...item, label: item.label || item.key, comingSoon: true, comingSoonNote: "This section isn't available right now." };
+    return { key: item.key, label: item.label || cfg.label, comingSoon: false };
+  }
+
   renderNav();
   showOverview();
 
@@ -248,63 +305,6 @@
     });
 
     overviewArea.appendChild(grid);
-  }
-
-  // ---- Sidebar navigation layout ----
-  // This array is the single source of truth for sidebar structure/order —
-  // deliberately decoupled from TYPE_CONFIG on the server, so we can lay
-  // the sidebar out exactly like the reference portal (Analytics / Space
-  // Booking / Domestic Buyers / General Visitors / Payments / Service
-  // Request Forms) even for sections whose backend isn't built yet.
-  //
-  // Each item is either:
-  //   { key: "<TYPE_CONFIG key>" }                 — a real, working section
-  //   { key: "...", label: "...", comingSoon: true, comingSoonNote: "..." }
-  //     — a placeholder for a section being built in a later task. Clicking
-  //     it shows a friendly "coming soon" panel instead of calling the API.
-  // `label` is optional for real items — it falls back to the label the
-  // server sent in /api/types, so renaming a section only needs a change
-  // in one place (server.js).
-  const NAV_LAYOUT = [
-    {
-      kind: "group",
-      name: "Analytics",
-      items: [
-        { key: "analytics_exhibitors", label: "Exhibitors", custom: "analyticsExhibitors" },
-        { key: "analytics_domestic_buyers", label: "Domestic Buyers", custom: "analyticsBuyers" },
-      ],
-    },
-    {
-      kind: "group",
-      name: "Space Booking",
-      items: [
-        { key: "exhibitor_booking" },
-        { key: "hall_stall_management", label: "Hall & Stall Management", custom: "hallStall" },
-      ],
-    },
-    {
-      kind: "group",
-      name: "Domestic Buyers",
-      items: [
-        { key: "visitors_buyers" },
-        { key: "domestic_buyer_bulk_upload", label: "Bulk Upload", custom: "bulkUpload" },
-      ],
-    },
-    { kind: "item", item: { key: "visitors_delegates" } },
-    { kind: "item", item: { key: "exhibitor_eoi" } },
-    { kind: "item", item: { key: "payments", label: "Payments" } },
-    { kind: "item", item: { key: "service_requests", label: "Service Request Forms" } },
-  ];
-
-  // Resolves a NAV_LAYOUT entry against the live TYPES list from the
-  // server (for real sections) or keeps it as a placeholder/custom view.
-  function resolveNavItem(item) {
-    if (item.comingSoon || item.custom) return item;
-    const cfg = TYPES.find((t) => t.key === item.key);
-    // Defensive: if the server ever stops sending a key this file expects,
-    // fall back to a disabled-looking placeholder instead of throwing.
-    if (!cfg) return { ...item, label: item.label || item.key, comingSoon: true, comingSoonNote: "This section isn't available right now." };
-    return { key: item.key, label: item.label || cfg.label, comingSoon: false };
   }
 
   // ---- Sidebar ----
