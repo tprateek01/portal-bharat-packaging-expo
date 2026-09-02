@@ -175,6 +175,13 @@ const TYPE_CONFIG = {
       { key: "stall_type", label: "Stall Type", type: "select", options: ["Raw Space", "Shell Scheme"] },
       { key: "stall_size_sqm", label: "Stall Size (sqm)", type: "number" },
       { key: "primary_preferred_stall_number", label: "Preferred Stall No." },
+      // ---- Task 4: Space Booking <-> Stall linking. Populated via a
+      // LEFT JOIN against `stalls` (see FROM_OVERRIDES below) — not a real
+      // column on exhibitor_booking, so it's read-only here. The actual
+      // allot/unallot action lives in its own button (see the
+      // "Allot Stall" row action), not the generic Edit modal.
+      { key: "allotted_hall_number", label: "Allotted Hall", editable: false },
+      { key: "allotted_stall_number", label: "Allotted Stall", editable: false },
       { key: "total_payable", label: "Total Payable", type: "number" },
       { key: "billing_country", label: "Country", type: "select", options: COUNTRIES },
       { key: "billing_state", label: "State", type: "select", options: INDIAN_STATES },
@@ -216,6 +223,25 @@ const TYPE_CONFIG = {
 
 function getTypeConfig(type) {
   return TYPE_CONFIG[type] || null;
+}
+
+// ---------------------------------------------------------------------
+// Task 4: Space Booking <-> Stall linking
+// ---------------------------------------------------------------------
+// exhibitor_booking's list/export reads need to show which stall (if any)
+// is allotted to each exhibitor. That's a LEFT JOIN against `stalls`, not
+// a real column — so list/export use this subquery as their FROM source
+// instead of the bare table name, while PATCH/DELETE (which write) keep
+// using the real `exhibitor_booking` table untouched.
+const FROM_OVERRIDES = {
+  exhibitor_booking: `(
+    SELECT eb.*, s.hall_number AS allotted_hall_number, s.stall_number AS allotted_stall_number
+    FROM exhibitor_booking eb
+    LEFT JOIN stalls s ON s.exhibitor_booking_id = eb.id
+  ) AS exhibitor_booking`,
+};
+function fromClause(cfg) {
+  return FROM_OVERRIDES[cfg.table] || cfg.table;
 }
 
 // ---------------------------------------------------------------------
@@ -631,6 +657,475 @@ app.post("/api/domestic-buyers/bulk-upload", requireAuth, (req, res) => {
 });
 
 // ---------------------------------------------------------------------
+// Hall & Stall Management (Task 3)
+// ---------------------------------------------------------------------
+// This is data the admin portal itself owns (not the registration site),
+// so it doesn't go through the generic TYPE_CONFIG/records system above —
+// it gets its own small set of routes instead.
+
+const FLOOR_OPTIONS = ["Ground Floor", "First Floor", "Second Floor"];
+const OPEN_SIDES_OPTIONS = ["One Side Open", "Two Sides Open", "Three Sides Open", "Four Sides Open"];
+const STALL_STATUSES = ["Vacant", "Allotted"];
+
+function computeArea(length, breadth) {
+  const l = parseFloat(length);
+  const b = parseFloat(breadth);
+  if (Number.isFinite(l) && Number.isFinite(b)) return l * b;
+  return null;
+}
+
+// GET /api/stalls/counts — badge counts for the Vacant/Allotted tabs.
+app.get("/api/stalls/counts", requireAuth, async (req, res) => {
+  try {
+    const result = await pool.query(`SELECT status, COUNT(*) FROM stalls GROUP BY status`);
+    const counts = { Vacant: 0, Allotted: 0 };
+    result.rows.forEach((r) => (counts[r.status] = parseInt(r.count, 10)));
+    res.json(counts);
+  } catch (err) {
+    console.error("stall counts failed:", err.message);
+    res.status(500).json({ error: "Could not load stall counts." });
+  }
+});
+
+// GET /api/stalls?status=Vacant&search=&floor=&openSides=&page=&pageSize=
+app.get("/api/stalls", requireAuth, async (req, res) => {
+  const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+  const pageSize = Math.min(Math.max(parseInt(req.query.pageSize, 10) || 20, 1), 100);
+  const offset = (page - 1) * pageSize;
+
+  const clauses = [];
+  const values = [];
+  if (req.query.status && STALL_STATUSES.includes(req.query.status)) {
+    values.push(req.query.status);
+    clauses.push(`status = $${values.length}`);
+  }
+  if (req.query.search && req.query.search.trim()) {
+    values.push(`%${req.query.search.trim()}%`);
+    clauses.push(`(hall_number ILIKE $${values.length} OR stall_number ILIKE $${values.length})`);
+  }
+  if (req.query.floor && req.query.floor.trim()) {
+    values.push(req.query.floor.trim());
+    clauses.push(`floor = $${values.length}`);
+  }
+  if (req.query.openSides && req.query.openSides.trim()) {
+    values.push(req.query.openSides.trim());
+    clauses.push(`open_sides = $${values.length}`);
+  }
+  const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+
+  try {
+    const countResult = await pool.query(`SELECT COUNT(*) FROM stalls ${where}`, values);
+    const total = parseInt(countResult.rows[0].count, 10);
+    const dataResult = await pool.query(
+      `SELECT * FROM stalls ${where} ORDER BY hall_number, stall_number LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
+      [...values, pageSize, offset]
+    );
+    res.json({ rows: dataResult.rows, total, page, pageSize });
+  } catch (err) {
+    console.error("list stalls failed:", err.message);
+    res.status(500).json({ error: "Could not load stalls." });
+  }
+});
+
+// POST /api/stalls — Add Stalls modal (single stall)
+app.post("/api/stalls", requireAuth, async (req, res) => {
+  const { hall_number, stall_number, floor, open_sides, length, breadth } = req.body || {};
+  if (!hall_number || !String(hall_number).trim()) return res.status(400).json({ error: "Hall Number is required." });
+  if (!stall_number || !String(stall_number).trim()) return res.status(400).json({ error: "Stall Number is required." });
+
+  try {
+    const result = await pool.query(
+      `INSERT INTO stalls (hall_number, stall_number, floor, open_sides, length, breadth, area_sqm)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+      [
+        String(hall_number).trim(),
+        String(stall_number).trim(),
+        floor || null,
+        open_sides || null,
+        length || null,
+        breadth || null,
+        computeArea(length, breadth),
+      ]
+    );
+    res.json({ success: true, row: result.rows[0] });
+  } catch (err) {
+    if (err.code === "23505") {
+      return res.status(409).json({ error: "This Hall + Stall Number combination already exists." });
+    }
+    console.error("create stall failed:", err.message);
+    res.status(500).json({ error: "Could not add stall." });
+  }
+});
+
+// PATCH /api/stalls/:id — edit modal (also used to flip status Vacant<->Allotted)
+app.patch("/api/stalls/:id", requireAuth, async (req, res) => {
+  const body = req.body || {};
+  const editable = ["hall_number", "stall_number", "floor", "open_sides", "length", "breadth", "status"];
+  const setClauses = [];
+  const values = [];
+
+  for (const key of editable) {
+    if (body[key] === undefined) continue;
+    if (key === "status" && !STALL_STATUSES.includes(body.status)) {
+      return res.status(400).json({ error: `Status must be one of: ${STALL_STATUSES.join(", ")}` });
+    }
+    values.push(body[key] === "" ? null : body[key]);
+    setClauses.push(`${key} = $${values.length}`);
+  }
+
+  // Recompute area whenever either dimension changes — using whichever new
+  // value was sent, falling back to what's already stored for the other.
+  if (body.length !== undefined || body.breadth !== undefined) {
+    try {
+      const existing = await pool.query(`SELECT length, breadth FROM stalls WHERE id = $1`, [req.params.id]);
+      if (existing.rowCount === 0) return res.status(404).json({ error: "Stall not found." });
+      const newLength = body.length !== undefined ? body.length : existing.rows[0].length;
+      const newBreadth = body.breadth !== undefined ? body.breadth : existing.rows[0].breadth;
+      values.push(computeArea(newLength, newBreadth));
+      setClauses.push(`area_sqm = $${values.length}`);
+    } catch (err) {
+      console.error("recompute area failed:", err.message);
+    }
+  }
+
+  if (setClauses.length === 0) return res.status(400).json({ error: "No valid fields to update." });
+
+  values.push(req.params.id);
+  try {
+    const result = await pool.query(
+      `UPDATE stalls SET ${setClauses.join(", ")} WHERE id = $${values.length} RETURNING *`,
+      values
+    );
+    if (result.rowCount === 0) return res.status(404).json({ error: "Stall not found." });
+    res.json({ success: true, row: result.rows[0] });
+  } catch (err) {
+    if (err.code === "23505") {
+      return res.status(409).json({ error: "This Hall + Stall Number combination already exists." });
+    }
+    console.error("update stall failed:", err.message);
+    res.status(500).json({ error: "Could not update stall." });
+  }
+});
+
+// DELETE /api/stalls/:id
+app.delete("/api/stalls/:id", requireAuth, async (req, res) => {
+  try {
+    const result = await pool.query(`DELETE FROM stalls WHERE id = $1`, [req.params.id]);
+    if (result.rowCount === 0) return res.status(404).json({ error: "Stall not found." });
+    res.json({ success: true });
+  } catch (err) {
+    console.error("delete stall failed:", err.message);
+    res.status(500).json({ error: "Could not delete stall." });
+  }
+});
+
+// ---- Stall bulk upload (.xlsx) — same pattern as Domestic Buyers ----
+const STALL_UPLOAD_COLUMNS = [
+  { header: "Hall Number", key: "hall_number", required: true },
+  { header: "Stall Number", key: "stall_number", required: true },
+  { header: "Floor", key: "floor", required: false },
+  { header: "Open Sides", key: "open_sides", required: false },
+  { header: "Length", key: "length", required: false },
+  { header: "Breadth", key: "breadth", required: false },
+];
+
+app.get("/api/stalls/upload/template", requireAuth, async (req, res) => {
+  try {
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet("Stalls");
+    sheet.columns = STALL_UPLOAD_COLUMNS.map((c) => ({ header: c.header, key: c.key, width: 22 }));
+    sheet.getRow(1).font = { bold: true };
+    sheet.addRow({ hall_number: "H10", stall_number: "H10-06/348", floor: "Ground Floor", open_sides: "Two Sides Open", length: 3, breadth: 3 });
+
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", 'attachment; filename="stall_bulk_upload_template.xlsx"');
+    await workbook.xlsx.write(res);
+    res.end();
+  } catch (err) {
+    console.error("stall template generation failed:", err.message);
+    res.status(500).json({ error: "Could not generate template." });
+  }
+});
+
+app.get("/api/stalls/bulk-uploads", requireAuth, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT id, filename, uploaded_by, total_rows, success_count, failed_count, status, created_at
+       FROM bulk_uploads WHERE upload_type = 'stalls' ORDER BY created_at DESC LIMIT 25`
+    );
+    res.json({ uploads: result.rows });
+  } catch (err) {
+    console.error("list stall bulk_uploads failed:", err.message);
+    res.status(500).json({ error: "Could not load upload history." });
+  }
+});
+
+app.get("/api/stalls/bulk-uploads/:id/failure-report", requireAuth, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT failure_report FROM bulk_uploads WHERE id = $1 AND upload_type = 'stalls'`,
+      [req.params.id]
+    );
+    if (result.rowCount === 0) return res.status(404).json({ error: "Upload not found." });
+    const lines = ["Row,Reason"];
+    (result.rows[0].failure_report || []).forEach((f) => lines.push(`${f.row},"${String(f.reason).replace(/"/g, '""')}"`));
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="stall_upload_${req.params.id}_failures.csv"`);
+    res.send("\uFEFF" + lines.join("\n"));
+  } catch (err) {
+    console.error("stall failure report failed:", err.message);
+    res.status(500).json({ error: "Could not generate failure report." });
+  }
+});
+
+app.post("/api/stalls/bulk-upload", requireAuth, (req, res) => {
+  upload.single("file")(req, res, async (uploadErr) => {
+    if (uploadErr) return res.status(400).json({ error: uploadErr.message });
+    if (!req.file) return res.status(400).json({ error: "No file was uploaded." });
+
+    try {
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.load(req.file.buffer);
+      const sheet = workbook.worksheets[0];
+      if (!sheet) return res.status(400).json({ error: "The file has no sheets." });
+
+      const headerRow = sheet.getRow(1);
+      const colIndexByKey = {};
+      headerRow.eachCell((cell, colNumber) => {
+        const norm = normalizeHeader(cell.value);
+        const match = STALL_UPLOAD_COLUMNS.find((c) => normalizeHeader(c.header) === norm || c.key === norm);
+        if (match) colIndexByKey[match.key] = colNumber;
+      });
+      const missingRequired = STALL_UPLOAD_COLUMNS.filter((c) => c.required && !colIndexByKey[c.key]);
+      if (missingRequired.length > 0) {
+        return res.status(400).json({
+          error: `File is missing required column(s): ${missingRequired.map((c) => c.header).join(", ")}. Use "Download Template" to get the exact format.`,
+        });
+      }
+
+      const MAX_ROWS = 2000;
+      const dataRowCount = sheet.rowCount - 1;
+      if (dataRowCount > MAX_ROWS) {
+        return res.status(400).json({ error: `This file has ${dataRowCount} rows. Please split it into batches of ${MAX_ROWS} or fewer.` });
+      }
+
+      let successCount = 0;
+      const failures = [];
+
+      for (let rowNumber = 2; rowNumber <= sheet.rowCount; rowNumber++) {
+        const row = sheet.getRow(rowNumber);
+        if (row.cellCount === 0 || row.values.every((v) => v === null || v === undefined || v === "")) continue;
+
+        const getCell = (key) => {
+          const idx = colIndexByKey[key];
+          if (!idx) return "";
+          const val = row.getCell(idx).value;
+          if (val === null || val === undefined) return "";
+          if (typeof val === "object") return String(val.text ?? val.result ?? "").trim();
+          return String(val).trim();
+        };
+
+        const record = {
+          hall_number: getCell("hall_number"),
+          stall_number: getCell("stall_number"),
+          floor: getCell("floor"),
+          open_sides: getCell("open_sides"),
+          length: getCell("length"),
+          breadth: getCell("breadth"),
+        };
+
+        if (!record.hall_number || !record.stall_number) {
+          failures.push({ row: rowNumber, reason: "Hall Number and Stall Number are required." });
+          continue;
+        }
+
+        try {
+          await pool.query(
+            `INSERT INTO stalls (hall_number, stall_number, floor, open_sides, length, breadth, area_sqm)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+            [
+              record.hall_number,
+              record.stall_number,
+              record.floor || null,
+              record.open_sides || null,
+              record.length || null,
+              record.breadth || null,
+              computeArea(record.length, record.breadth),
+            ]
+          );
+          successCount += 1;
+        } catch (err) {
+          if (err.code === "23505") {
+            failures.push({ row: rowNumber, reason: "This Hall + Stall Number combination already exists." });
+          } else {
+            failures.push({ row: rowNumber, reason: "Could not save this row — please check its data." });
+          }
+        }
+      }
+
+      const totalRows = successCount + failures.length;
+      const logResult = await pool.query(
+        `INSERT INTO bulk_uploads (upload_type, filename, uploaded_by, total_rows, success_count, failed_count, status, failure_report)
+         VALUES ('stalls', $1, $2, $3, $4, $5, $6, $7)
+         RETURNING id, filename, uploaded_by, total_rows, success_count, failed_count, status, created_at`,
+        [
+          req.file.originalname,
+          req.admin?.username || null,
+          totalRows,
+          successCount,
+          failures.length,
+          failures.length === 0 ? "Completed" : "Completed with errors",
+          JSON.stringify(failures),
+        ]
+      );
+
+      res.json({ success: true, totalRows, successCount, failedCount: failures.length, upload: logResult.rows[0] });
+    } catch (err) {
+      console.error("stall bulk upload failed:", err.message);
+      res.status(500).json({ error: "Could not process the file. Make sure it's a valid .xlsx file matching the template." });
+    }
+  });
+});
+
+// ---- Hall Managers (third tab on the Hall & Stall Management page) ----
+app.get("/api/hall-managers", requireAuth, async (req, res) => {
+  try {
+    const result = await pool.query(`SELECT * FROM hall_managers ORDER BY hall_number`);
+    res.json({ rows: result.rows });
+  } catch (err) {
+    console.error("list hall_managers failed:", err.message);
+    res.status(500).json({ error: "Could not load hall managers." });
+  }
+});
+
+app.post("/api/hall-managers", requireAuth, async (req, res) => {
+  const { hall_number, manager_name, mobile_number, email } = req.body || {};
+  if (!hall_number || !String(hall_number).trim()) return res.status(400).json({ error: "Hall Number is required." });
+  if (!manager_name || !String(manager_name).trim()) return res.status(400).json({ error: "Manager Name is required." });
+  try {
+    const result = await pool.query(
+      `INSERT INTO hall_managers (hall_number, manager_name, mobile_number, email) VALUES ($1, $2, $3, $4) RETURNING *`,
+      [String(hall_number).trim(), String(manager_name).trim(), mobile_number || null, email || null]
+    );
+    res.json({ success: true, row: result.rows[0] });
+  } catch (err) {
+    console.error("create hall_manager failed:", err.message);
+    res.status(500).json({ error: "Could not add hall manager." });
+  }
+});
+
+app.patch("/api/hall-managers/:id", requireAuth, async (req, res) => {
+  const body = req.body || {};
+  const editable = ["hall_number", "manager_name", "mobile_number", "email"];
+  const setClauses = [];
+  const values = [];
+  for (const key of editable) {
+    if (body[key] === undefined) continue;
+    values.push(body[key] === "" ? null : body[key]);
+    setClauses.push(`${key} = $${values.length}`);
+  }
+  if (setClauses.length === 0) return res.status(400).json({ error: "No valid fields to update." });
+  values.push(req.params.id);
+  try {
+    const result = await pool.query(
+      `UPDATE hall_managers SET ${setClauses.join(", ")} WHERE id = $${values.length} RETURNING *`,
+      values
+    );
+    if (result.rowCount === 0) return res.status(404).json({ error: "Hall manager not found." });
+    res.json({ success: true, row: result.rows[0] });
+  } catch (err) {
+    console.error("update hall_manager failed:", err.message);
+    res.status(500).json({ error: "Could not update hall manager." });
+  }
+});
+
+app.delete("/api/hall-managers/:id", requireAuth, async (req, res) => {
+  try {
+    const result = await pool.query(`DELETE FROM hall_managers WHERE id = $1`, [req.params.id]);
+    if (result.rowCount === 0) return res.status(404).json({ error: "Hall manager not found." });
+    res.json({ success: true });
+  } catch (err) {
+    console.error("delete hall_manager failed:", err.message);
+    res.status(500).json({ error: "Could not delete hall manager." });
+  }
+});
+
+// GET /api/stalls/meta — floor & open-sides option lists, for the filter
+// dropdowns and the Add/Edit Stall form.
+app.get("/api/stalls/meta", requireAuth, (req, res) => {
+  res.json({ floors: FLOOR_OPTIONS, openSides: OPEN_SIDES_OPTIONS, statuses: STALL_STATUSES });
+});
+
+// POST /api/exhibitor-booking/:id/allot-stall  { stallId }
+// Allots the given (vacant) stall to this exhibitor. If the exhibitor
+// already had a different stall allotted via this action, that old stall
+// is freed back to Vacant first — keeping "one exhibitor -> one stall"
+// simple, matching how this portal is meant to be used day to day.
+app.post("/api/exhibitor-booking/:id/allot-stall", requireAuth, async (req, res) => {
+  const exhibitorId = req.params.id;
+  const { stallId } = req.body || {};
+  if (!stallId) return res.status(400).json({ error: "stallId is required." });
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    const exhibitorCheck = await client.query(`SELECT id FROM exhibitor_booking WHERE id = $1`, [exhibitorId]);
+    if (exhibitorCheck.rowCount === 0) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Exhibitor not found." });
+    }
+
+    const stallCheck = await client.query(`SELECT id, status, exhibitor_booking_id FROM stalls WHERE id = $1`, [stallId]);
+    if (stallCheck.rowCount === 0) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Stall not found." });
+    }
+    const stall = stallCheck.rows[0];
+    if (stall.status === "Allotted" && stall.exhibitor_booking_id !== Number(exhibitorId)) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ error: "This stall is already allotted to another exhibitor." });
+    }
+
+    // Free any stall this exhibitor previously held, if it's a different one.
+    await client.query(
+      `UPDATE stalls SET status = 'Vacant', exhibitor_booking_id = NULL
+       WHERE exhibitor_booking_id = $1 AND id != $2`,
+      [exhibitorId, stallId]
+    );
+
+    const result = await client.query(
+      `UPDATE stalls SET status = 'Allotted', exhibitor_booking_id = $1 WHERE id = $2 RETURNING *`,
+      [exhibitorId, stallId]
+    );
+
+    await client.query("COMMIT");
+    res.json({ success: true, stall: result.rows[0] });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("allot stall failed:", err.message);
+    res.status(500).json({ error: "Could not allot stall." });
+  } finally {
+    client.release();
+  }
+});
+
+// POST /api/exhibitor-booking/:id/unallot-stall — frees whatever stall
+// (if any) is currently allotted to this exhibitor.
+app.post("/api/exhibitor-booking/:id/unallot-stall", requireAuth, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `UPDATE stalls SET status = 'Vacant', exhibitor_booking_id = NULL WHERE exhibitor_booking_id = $1 RETURNING *`,
+      [req.params.id]
+    );
+    res.json({ success: true, freed: result.rowCount });
+  } catch (err) {
+    console.error("unallot stall failed:", err.message);
+    res.status(500).json({ error: "Could not unallot stall." });
+  }
+});
+
+// ---------------------------------------------------------------------
 // Data APIs (all protected)
 // ---------------------------------------------------------------------
 
@@ -727,12 +1222,12 @@ app.get("/api/records/:type", requireAuth, async (req, res) => {
   const { where, values } = buildWhereClause(cfg, req.query);
 
   try {
-    const countResult = await pool.query(`SELECT COUNT(*) FROM ${cfg.table} ${where}`, values);
+    const countResult = await pool.query(`SELECT COUNT(*) FROM ${fromClause(cfg)} ${where}`, values);
     const total = parseInt(countResult.rows[0].count, 10);
 
     const dataValues = [...values, pageSize, offset];
     const dataResult = await pool.query(
-      `SELECT * FROM ${cfg.table} ${where} ORDER BY created_at DESC LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
+      `SELECT * FROM ${fromClause(cfg)} ${where} ORDER BY created_at DESC LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
       dataValues
     );
 
@@ -751,7 +1246,7 @@ app.get("/api/records/:type/export", requireAuth, async (req, res) => {
   const { where, values } = buildWhereClause(cfg, req.query);
 
   try {
-    const result = await pool.query(`SELECT * FROM ${cfg.table} ${where} ORDER BY created_at DESC`, values);
+    const result = await pool.query(`SELECT * FROM ${fromClause(cfg)} ${where} ORDER BY created_at DESC`, values);
 
     const headers = ["id", ...cfg.columns.map((c) => c.key), "status"];
     const escape = (val) => {

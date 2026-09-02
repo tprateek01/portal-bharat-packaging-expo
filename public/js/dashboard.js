@@ -67,6 +67,7 @@
   const overviewArea = document.getElementById("overviewArea");
   const comingSoonArea = document.getElementById("comingSoonArea");
   const bulkUploadArea = document.getElementById("bulkUploadArea");
+  const hallStallArea = document.getElementById("hallStallArea");
   const recordsView = document.getElementById("recordsView");
   const modalBackdrop = document.getElementById("modalBackdrop");
   const modalBody = document.getElementById("modalBody");
@@ -89,6 +90,11 @@
     editModalBackdrop.classList.remove("open");
     editModalError.classList.remove("show");
     editModalError.textContent = "";
+    // Reset title/button text so the next modal (which may be a different
+    // one — Edit Record, Add Stall, Allot Stall, ...) doesn't inherit
+    // whatever the previous modal left behind.
+    document.querySelector("#editModalBackdrop h2").textContent = "Edit Record";
+    editModalSave.textContent = "Save Changes";
   }
 
   // ---- Load type/column config from the server ----
@@ -138,6 +144,7 @@
     overviewArea.style.display = "block";
     comingSoonArea.style.display = "none";
     bulkUploadArea.style.display = "none";
+    hallStallArea.style.display = "none";
     recordsView.style.display = "none";
     exportBtn.style.display = "none";
     pageTitle.textContent = "Overview";
@@ -152,6 +159,7 @@
     overviewArea.style.display = "none";
     comingSoonArea.style.display = "none";
     bulkUploadArea.style.display = "none";
+    hallStallArea.style.display = "none";
     recordsView.style.display = "block";
     exportBtn.style.display = "";
     renderStatusTabs();
@@ -252,7 +260,7 @@
       name: "Space Booking",
       items: [
         { key: "exhibitor_booking" },
-        { key: "hall_stall_management", label: "Hall & Stall Management", comingSoon: true, comingSoonNote: "Stall inventory (vacant/allotted, add & upload stalls) — coming in a later update." },
+        { key: "hall_stall_management", label: "Hall & Stall Management", custom: "hallStall" },
       ],
     },
     {
@@ -358,6 +366,8 @@
       renderNav();
       if (t.custom === "bulkUpload") {
         showBulkUpload();
+      } else if (t.custom === "hallStall") {
+        showHallStall();
       } else if (t.comingSoon) {
         showComingSoon(t.key, t.label, t.comingSoonNote);
       } else {
@@ -375,6 +385,7 @@
     overviewArea.style.display = "none";
     comingSoonArea.style.display = "none";
     recordsView.style.display = "none";
+    hallStallArea.style.display = "none";
     bulkUploadArea.style.display = "block";
     exportBtn.style.display = "none";
     pageTitle.textContent = "Domestic Buyer Bulk Upload";
@@ -558,6 +569,7 @@
     overviewArea.style.display = "none";
     recordsView.style.display = "none";
     bulkUploadArea.style.display = "none";
+    hallStallArea.style.display = "none";
     comingSoonArea.style.display = "block";
     exportBtn.style.display = "none";
     pageTitle.textContent = label;
@@ -568,6 +580,628 @@
         <p>${escapeHtml(note || "This section is being built and will be available in a future update.")}</p>
       </div>
     `;
+  }
+
+  // ---- Hall & Stall Management (Task 3) ----
+  // Owns its own small bit of state/rendering — it isn't a generic
+  // TYPE_CONFIG record type (the data lives in the portal's own `stalls` /
+  // `hall_managers` tables, not the registration site's schema).
+  let stallMeta = null; // { floors, openSides } — loaded once, cached
+  let hallStallTab = "Vacant"; // "Vacant" | "Allotted" | "HallManagers"
+  let stallPage = 1;
+  const STALL_PAGE_SIZE = 20;
+  let stallFilters = { search: "", floor: "", openSides: "" };
+  let stallDebounce = null;
+
+  async function showHallStall() {
+    currentType = "hall_stall_management";
+    overviewArea.style.display = "none";
+    comingSoonArea.style.display = "none";
+    bulkUploadArea.style.display = "none";
+    recordsView.style.display = "none";
+    hallStallArea.style.display = "block";
+    exportBtn.style.display = "none";
+    pageTitle.textContent = "Hall & Stall Management";
+    hallStallTab = "Vacant";
+    stallPage = 1;
+    stallFilters = { search: "", floor: "", openSides: "" };
+
+    if (!stallMeta) {
+      try {
+        stallMeta = await apiFetch("/api/stalls/meta").then((r) => r.json());
+      } catch {
+        stallMeta = { floors: [], openSides: [] };
+      }
+    }
+    renderHallStallShell();
+  }
+
+  function renderHallStallShell() {
+    hallStallArea.innerHTML = `
+      <div class="hs-toolbar">
+        <div class="status-tabs" id="hsTabs"></div>
+        <div class="hs-toolbar-actions">
+          <button type="button" class="template-btn" id="hsUploadBtn">⬆ Upload Stalls</button>
+          <button type="button" class="upload-submit-btn hs-add-btn" id="hsAddBtn">+ Add Stalls</button>
+        </div>
+      </div>
+      <div class="filter-bar" id="hsFilterBar"></div>
+      <div class="table-wrap">
+        <div id="hsTableArea"><div class="loading-state">Loading…</div></div>
+        <div class="table-footer">
+          <span id="hsResultCount"></span>
+          <div class="pager">
+            <button id="hsPrevPage">‹ Prev</button>
+            <span id="hsPageIndicator">Page 1</span>
+            <button id="hsNextPage">Next ›</button>
+          </div>
+        </div>
+      </div>
+    `;
+    document.getElementById("hsUploadBtn").addEventListener("click", showStallUpload);
+    document.getElementById("hsAddBtn").addEventListener("click", () => {
+      if (hallStallTab === "HallManagers") openHallManagerModal(null);
+      else openStallModal(null);
+    });
+    renderHallStallTabs();
+    renderHallStallFilterBar();
+    loadHallStallTabData();
+  }
+
+  async function renderHallStallTabs() {
+    const tabsEl = document.getElementById("hsTabs");
+    if (!tabsEl) return;
+    let counts = { Vacant: "…", Allotted: "…" };
+    try {
+      counts = await apiFetch("/api/stalls/counts").then((r) => r.json());
+    } catch {
+      counts = { Vacant: 0, Allotted: 0 };
+    }
+    const tabsAgain = document.getElementById("hsTabs");
+    if (!tabsAgain) return; // navigated away while counts were loading
+    tabsAgain.innerHTML = "";
+    [
+      { key: "Vacant", label: `Vacant Stalls (${counts.Vacant})` },
+      { key: "Allotted", label: `Allotted Stalls (${counts.Allotted})` },
+      { key: "HallManagers", label: "Hall Managers" },
+    ].forEach((t) => {
+      const btn = document.createElement("button");
+      btn.textContent = t.label;
+      btn.className = hallStallTab === t.key ? "active" : "";
+      btn.addEventListener("click", () => {
+        hallStallTab = t.key;
+        stallPage = 1;
+        document.getElementById("hsAddBtn").textContent = t.key === "HallManagers" ? "+ Add Hall Manager" : "+ Add Stalls";
+        document.getElementById("hsUploadBtn").style.display = t.key === "HallManagers" ? "none" : "";
+        renderHallStallTabs();
+        renderHallStallFilterBar();
+        loadHallStallTabData();
+      });
+      tabsAgain.appendChild(btn);
+    });
+    document.getElementById("hsAddBtn").textContent = hallStallTab === "HallManagers" ? "+ Add Hall Manager" : "+ Add Stalls";
+    document.getElementById("hsUploadBtn").style.display = hallStallTab === "HallManagers" ? "none" : "";
+  }
+
+  function renderHallStallFilterBar() {
+    const bar = document.getElementById("hsFilterBar");
+    if (!bar) return;
+    bar.innerHTML = "";
+    if (hallStallTab === "HallManagers") return; // no filters on this tab
+
+    const search = document.createElement("input");
+    search.type = "text";
+    search.placeholder = "Hall or stall number";
+    search.value = stallFilters.search;
+    search.addEventListener("input", () => {
+      stallFilters.search = search.value;
+      clearTimeout(stallDebounce);
+      stallDebounce = setTimeout(() => {
+        stallPage = 1;
+        loadHallStallTabData();
+      }, 400);
+    });
+    bar.appendChild(search);
+
+    const floorSelect = document.createElement("select");
+    floorSelect.innerHTML = `<option value="">All Floors</option>` + stallMeta.floors.map((f) => `<option value="${escapeHtml(f)}">${escapeHtml(f)}</option>`).join("");
+    floorSelect.value = stallFilters.floor;
+    floorSelect.addEventListener("change", () => {
+      stallFilters.floor = floorSelect.value;
+      stallPage = 1;
+      loadHallStallTabData();
+    });
+    bar.appendChild(floorSelect);
+
+    const sidesSelect = document.createElement("select");
+    sidesSelect.innerHTML = `<option value="">All Sides</option>` + stallMeta.openSides.map((s) => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join("");
+    sidesSelect.value = stallFilters.openSides;
+    sidesSelect.addEventListener("change", () => {
+      stallFilters.openSides = sidesSelect.value;
+      stallPage = 1;
+      loadHallStallTabData();
+    });
+    bar.appendChild(sidesSelect);
+  }
+
+  function loadHallStallTabData() {
+    if (hallStallTab === "HallManagers") loadHallManagers();
+    else loadStalls();
+  }
+
+  async function loadStalls() {
+    const area = document.getElementById("hsTableArea");
+    if (!area) return;
+    area.innerHTML = '<div class="loading-state">Loading stalls…</div>';
+    const params = new URLSearchParams({ status: hallStallTab, page: stallPage, pageSize: STALL_PAGE_SIZE });
+    if (stallFilters.search) params.set("search", stallFilters.search);
+    if (stallFilters.floor) params.set("floor", stallFilters.floor);
+    if (stallFilters.openSides) params.set("openSides", stallFilters.openSides);
+    try {
+      const res = await apiFetch(`/api/stalls?${params.toString()}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Could not load stalls.");
+      renderStallTable(data);
+    } catch (err) {
+      area.innerHTML = `<div class="empty-state">${escapeHtml(err.message)}</div>`;
+    }
+  }
+
+  function renderStallTable(data) {
+    const area = document.getElementById("hsTableArea");
+    if (!area) return;
+    const { rows, total, page, pageSize } = data;
+
+    if (rows.length === 0) {
+      area.innerHTML = '<div class="empty-state">No stalls found.</div>';
+    } else {
+      const table = document.createElement("table");
+      table.className = "data-table";
+      table.innerHTML = `<thead><tr>
+        <th>Actions</th><th>Hall Number</th><th>Stall Number</th><th>Floor</th>
+        <th>Open Sides</th><th>Length</th><th>Breadth</th><th>Area (sqm)</th>
+      </tr></thead>`;
+      const tbody = document.createElement("tbody");
+      rows.forEach((row) => {
+        const tr = document.createElement("tr");
+        const actionsTd = document.createElement("td");
+        const wrap = document.createElement("div");
+        wrap.className = "row-actions";
+        const editBtn = document.createElement("button");
+        editBtn.className = "edit";
+        editBtn.title = "Edit stall";
+        editBtn.innerHTML = ICONS.edit;
+        editBtn.addEventListener("click", () => openStallModal(row));
+        wrap.appendChild(editBtn);
+        const deleteBtn = document.createElement("button");
+        deleteBtn.className = "delete";
+        deleteBtn.title = "Delete stall";
+        deleteBtn.innerHTML = ICONS.delete;
+        deleteBtn.addEventListener("click", () => deleteStall(row.id));
+        wrap.appendChild(deleteBtn);
+        actionsTd.appendChild(wrap);
+        tr.appendChild(actionsTd);
+
+        [row.hall_number, row.stall_number, row.floor, row.open_sides, row.length, row.breadth, row.area_sqm].forEach((val) => {
+          const td = document.createElement("td");
+          td.textContent = val === null || val === undefined || val === "" ? "—" : val;
+          tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+      });
+      table.appendChild(tbody);
+      area.innerHTML = "";
+      area.appendChild(table);
+    }
+
+    const start = total === 0 ? 0 : (page - 1) * pageSize + 1;
+    const end = Math.min(page * pageSize, total);
+    document.getElementById("hsResultCount").textContent = `${start}-${end} of ${total} results`;
+    document.getElementById("hsPageIndicator").textContent = `Page ${page}`;
+    const prevBtn = document.getElementById("hsPrevPage");
+    const nextBtn = document.getElementById("hsNextPage");
+    prevBtn.disabled = page <= 1;
+    nextBtn.disabled = end >= total;
+    prevBtn.onclick = () => { if (stallPage > 1) { stallPage -= 1; loadStalls(); } };
+    nextBtn.onclick = () => { if (end < total) { stallPage += 1; loadStalls(); } };
+  }
+
+  async function deleteStall(id) {
+    if (!confirm("Delete this stall permanently? This cannot be undone.")) return;
+    try {
+      const res = await apiFetch(`/api/stalls/${id}`, { method: "DELETE" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Could not delete stall.");
+      renderHallStallTabs();
+      loadStalls();
+    } catch (err) {
+      alert(err.message);
+    }
+  }
+
+  // Add/Edit Stall — reuses the generic edit modal shell (backdrop/body/
+  // error/save button) but with its own fields, since stalls aren't a
+  // TYPE_CONFIG record type.
+  function openStallModal(row) {
+    editModalError.classList.remove("show");
+    editModalError.textContent = "";
+    editModalBody.innerHTML = "";
+    document.querySelector("#editModalBackdrop h2").textContent = row ? "Edit Stall" : "Add Stall";
+
+    const fields = [
+      { key: "hall_number", label: "Hall Number", type: "text" },
+      { key: "stall_number", label: "Stall Number", type: "text" },
+      { key: "floor", label: "Floor", type: "select", options: stallMeta.floors },
+      { key: "open_sides", label: "Open Sides", type: "select", options: stallMeta.openSides },
+      { key: "length", label: "Length", type: "number" },
+      { key: "breadth", label: "Breadth", type: "number" },
+    ];
+    const inputs = {};
+    fields.forEach((f) => {
+      const field = document.createElement("div");
+      field.className = "edit-field";
+      const label = document.createElement("label");
+      label.textContent = f.label;
+      field.appendChild(label);
+      let input;
+      if (f.type === "select") {
+        input = document.createElement("select");
+        input.innerHTML = `<option value="">Select…</option>` + f.options.map((o) => `<option value="${escapeHtml(o)}">${escapeHtml(o)}</option>`).join("");
+        if (row && row[f.key]) input.value = row[f.key];
+      } else {
+        input = document.createElement("input");
+        input.type = f.type;
+        if (f.type === "number") input.step = "any";
+        if (row && row[f.key] !== null && row[f.key] !== undefined) input.value = row[f.key];
+      }
+      field.appendChild(input);
+      editModalBody.appendChild(field);
+      inputs[f.key] = input;
+    });
+
+    if (row) {
+      const field = document.createElement("div");
+      field.className = "edit-field status-field";
+      const label = document.createElement("label");
+      label.textContent = "Status";
+      const select = document.createElement("select");
+      STALL_STATUSES_CLIENT.forEach((s) => {
+        const opt = document.createElement("option");
+        opt.value = s;
+        opt.textContent = s;
+        if (s === row.status) opt.selected = true;
+        select.appendChild(opt);
+      });
+      field.appendChild(label);
+      field.appendChild(select);
+      editModalBody.appendChild(field);
+      inputs.status = select;
+    }
+
+    editModalSave.onclick = async () => {
+      const body = {};
+      fields.forEach((f) => (body[f.key] = inputs[f.key].value));
+      if (inputs.status) body.status = inputs.status.value;
+
+      if (!body.hall_number.trim() || !body.stall_number.trim()) {
+        editModalError.textContent = "Hall Number and Stall Number are required.";
+        editModalError.classList.add("show");
+        return;
+      }
+
+      editModalSave.disabled = true;
+      editModalSave.textContent = "Saving…";
+      try {
+        const url = row ? `/api/stalls/${row.id}` : "/api/stalls";
+        const res = await apiFetch(url, {
+          method: row ? "PATCH" : "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Could not save stall.");
+        closeEditModal();
+        document.querySelector("#editModalBackdrop h2").textContent = "Edit Record";
+        renderHallStallTabs();
+        loadStalls();
+      } catch (err) {
+        editModalError.textContent = err.message;
+        editModalError.classList.add("show");
+      } finally {
+        editModalSave.disabled = false;
+        editModalSave.textContent = "Save Changes";
+      }
+    };
+
+    editModalBackdrop.classList.add("open");
+  }
+  const STALL_STATUSES_CLIENT = ["Vacant", "Allotted"];
+
+  // ---- Hall Managers tab ----
+  async function loadHallManagers() {
+    const area = document.getElementById("hsTableArea");
+    if (!area) return;
+    area.innerHTML = '<div class="loading-state">Loading hall managers…</div>';
+    try {
+      const res = await apiFetch("/api/hall-managers");
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Could not load hall managers.");
+      renderHallManagerTable(data.rows);
+    } catch (err) {
+      area.innerHTML = `<div class="empty-state">${escapeHtml(err.message)}</div>`;
+    }
+    document.getElementById("hsResultCount").textContent = "";
+    document.getElementById("hsPageIndicator").textContent = "Page 1";
+    document.getElementById("hsPrevPage").disabled = true;
+    document.getElementById("hsNextPage").disabled = true;
+  }
+
+  function renderHallManagerTable(rows) {
+    const area = document.getElementById("hsTableArea");
+    if (!area) return;
+    if (!rows || rows.length === 0) {
+      area.innerHTML = '<div class="empty-state">No hall managers added yet.</div>';
+      return;
+    }
+    const table = document.createElement("table");
+    table.className = "data-table";
+    table.innerHTML = `<thead><tr><th>Actions</th><th>Hall Number</th><th>Manager Name</th><th>Mobile</th><th>Email</th></tr></thead>`;
+    const tbody = document.createElement("tbody");
+    rows.forEach((row) => {
+      const tr = document.createElement("tr");
+      const actionsTd = document.createElement("td");
+      const wrap = document.createElement("div");
+      wrap.className = "row-actions";
+      const editBtn = document.createElement("button");
+      editBtn.className = "edit";
+      editBtn.title = "Edit";
+      editBtn.innerHTML = ICONS.edit;
+      editBtn.addEventListener("click", () => openHallManagerModal(row));
+      wrap.appendChild(editBtn);
+      const deleteBtn = document.createElement("button");
+      deleteBtn.className = "delete";
+      deleteBtn.title = "Delete";
+      deleteBtn.innerHTML = ICONS.delete;
+      deleteBtn.addEventListener("click", () => deleteHallManager(row.id));
+      wrap.appendChild(deleteBtn);
+      actionsTd.appendChild(wrap);
+      tr.appendChild(actionsTd);
+
+      [row.hall_number, row.manager_name, row.mobile_number, row.email].forEach((val) => {
+        const td = document.createElement("td");
+        td.textContent = val || "—";
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    area.innerHTML = "";
+    area.appendChild(table);
+  }
+
+  async function deleteHallManager(id) {
+    if (!confirm("Remove this hall manager?")) return;
+    try {
+      const res = await apiFetch(`/api/hall-managers/${id}`, { method: "DELETE" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Could not delete hall manager.");
+      loadHallManagers();
+    } catch (err) {
+      alert(err.message);
+    }
+  }
+
+  function openHallManagerModal(row) {
+    editModalError.classList.remove("show");
+    editModalError.textContent = "";
+    editModalBody.innerHTML = "";
+    document.querySelector("#editModalBackdrop h2").textContent = row ? "Edit Hall Manager" : "Add Hall Manager";
+
+    const fields = [
+      { key: "hall_number", label: "Hall Number" },
+      { key: "manager_name", label: "Manager Name" },
+      { key: "mobile_number", label: "Mobile Number" },
+      { key: "email", label: "Email" },
+    ];
+    const inputs = {};
+    fields.forEach((f) => {
+      const field = document.createElement("div");
+      field.className = "edit-field";
+      const label = document.createElement("label");
+      label.textContent = f.label;
+      field.appendChild(label);
+      const input = document.createElement("input");
+      input.type = "text";
+      if (row && row[f.key]) input.value = row[f.key];
+      field.appendChild(input);
+      editModalBody.appendChild(field);
+      inputs[f.key] = input;
+    });
+
+    editModalSave.onclick = async () => {
+      const body = {};
+      fields.forEach((f) => (body[f.key] = inputs[f.key].value));
+      if (!body.hall_number.trim() || !body.manager_name.trim()) {
+        editModalError.textContent = "Hall Number and Manager Name are required.";
+        editModalError.classList.add("show");
+        return;
+      }
+      editModalSave.disabled = true;
+      editModalSave.textContent = "Saving…";
+      try {
+        const url = row ? `/api/hall-managers/${row.id}` : "/api/hall-managers";
+        const res = await apiFetch(url, {
+          method: row ? "PATCH" : "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Could not save hall manager.");
+        closeEditModal();
+        document.querySelector("#editModalBackdrop h2").textContent = "Edit Record";
+        loadHallManagers();
+      } catch (err) {
+        editModalError.textContent = err.message;
+        editModalError.classList.add("show");
+      } finally {
+        editModalSave.disabled = false;
+        editModalSave.textContent = "Save Changes";
+      }
+    };
+
+    editModalBackdrop.classList.add("open");
+  }
+
+  // ---- Upload Stalls sub-page (same dropzone pattern as Domestic Buyer
+  // Bulk Upload, pointed at the stalls endpoints) ----
+  let selectedStallFile = null;
+
+  function showStallUpload() {
+    hallStallArea.innerHTML = `
+      <button type="button" class="hs-back-btn" id="hsBackBtn">‹ Back to Hall & Stall Management</button>
+      <div class="bulk-upload-layout">
+        <div class="bulk-upload-main">
+          <div class="bulk-upload-toolbar">
+            <span class="bulk-upload-toolbar-label">Upload Stalls</span>
+            <button type="button" class="template-btn" id="stallTemplateBtn">⬇ Download Template</button>
+          </div>
+          <div class="dropzone" id="stallDropzone">
+            <div class="dropzone-icon">📤</div>
+            <div class="dropzone-title">Drop or Select file</div>
+            <div class="dropzone-sub">Drop files here or click <span class="dropzone-browse">browse</span> through your machine</div>
+            <input type="file" id="stallFileInput" accept=".xlsx" hidden />
+          </div>
+          <div class="dropzone-hint">Allowed *.xlsx, max size of 10 MB</div>
+          <div id="stallSelectedFileRow" class="selected-file-row" style="display:none;"></div>
+          <button type="button" class="primary-btn upload-submit-btn" id="stallUploadSubmitBtn" disabled>Upload</button>
+          <div id="stallUploadResult" class="upload-result" style="display:none;"></div>
+        </div>
+        <div class="bulk-upload-history">
+          <h3>Uploads</h3>
+          <div id="stallUploadsListArea"><div class="loading-state">Loading…</div></div>
+        </div>
+      </div>
+    `;
+
+    document.getElementById("hsBackBtn").addEventListener("click", renderHallStallShell);
+    document.getElementById("stallTemplateBtn").addEventListener("click", () => {
+      window.location.href = "/api/stalls/upload/template";
+    });
+
+    const dropzone = document.getElementById("stallDropzone");
+    const fileInput = document.getElementById("stallFileInput");
+    const selectedFileRow = document.getElementById("stallSelectedFileRow");
+    const uploadSubmitBtn = document.getElementById("stallUploadSubmitBtn");
+    const uploadResult = document.getElementById("stallUploadResult");
+
+    dropzone.addEventListener("click", () => fileInput.click());
+    dropzone.addEventListener("dragover", (e) => { e.preventDefault(); dropzone.classList.add("dragover"); });
+    dropzone.addEventListener("dragleave", () => dropzone.classList.remove("dragover"));
+    dropzone.addEventListener("drop", (e) => {
+      e.preventDefault();
+      dropzone.classList.remove("dragover");
+      if (e.dataTransfer.files && e.dataTransfer.files[0]) handleStallFileSelected(e.dataTransfer.files[0]);
+    });
+    fileInput.addEventListener("change", () => {
+      if (fileInput.files && fileInput.files[0]) handleStallFileSelected(fileInput.files[0]);
+    });
+
+    function handleStallFileSelected(file) {
+      uploadResult.style.display = "none";
+      if (!/\.xlsx$/i.test(file.name)) {
+        selectedFileRow.style.display = "flex";
+        selectedFileRow.innerHTML = `<span class="selected-file-error">"${escapeHtml(file.name)}" is not a .xlsx file. Please pick a .xlsx file.</span>`;
+        uploadSubmitBtn.disabled = true;
+        selectedStallFile = null;
+        return;
+      }
+      if (file.size > 10 * 1024 * 1024) {
+        selectedFileRow.style.display = "flex";
+        selectedFileRow.innerHTML = `<span class="selected-file-error">File is larger than 10 MB.</span>`;
+        uploadSubmitBtn.disabled = true;
+        selectedStallFile = null;
+        return;
+      }
+      selectedStallFile = file;
+      selectedFileRow.style.display = "flex";
+      selectedFileRow.innerHTML = `
+        <span class="selected-file-name">📄 ${escapeHtml(file.name)} <span class="selected-file-size">(${(file.size / 1024).toFixed(1)} KB)</span></span>
+        <button type="button" class="selected-file-remove" id="stallRemoveFileBtn">✕</button>
+      `;
+      uploadSubmitBtn.disabled = false;
+      document.getElementById("stallRemoveFileBtn").addEventListener("click", (e) => {
+        e.stopPropagation();
+        selectedStallFile = null;
+        fileInput.value = "";
+        selectedFileRow.style.display = "none";
+        uploadSubmitBtn.disabled = true;
+      });
+    }
+
+    uploadSubmitBtn.addEventListener("click", async () => {
+      if (!selectedStallFile) return;
+      uploadSubmitBtn.disabled = true;
+      uploadSubmitBtn.textContent = "Uploading…";
+      uploadResult.style.display = "none";
+      const formData = new FormData();
+      formData.append("file", selectedStallFile);
+      try {
+        const res = await apiFetch("/api/stalls/bulk-upload", { method: "POST", body: formData });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Upload failed.");
+        uploadResult.style.display = "block";
+        uploadResult.className = `upload-result ${data.failedCount > 0 ? "has-errors" : "success"}`;
+        uploadResult.innerHTML = `
+          <strong>${data.successCount} of ${data.totalRows} row${data.totalRows === 1 ? "" : "s"} imported successfully.</strong>
+          ${data.failedCount > 0 ? `<div class="upload-result-fail-line">${data.failedCount} row${data.failedCount === 1 ? "" : "s"} failed — <a href="/api/stalls/bulk-uploads/${data.upload.id}/failure-report">download failure report</a>.</div>` : ""}
+        `;
+        selectedStallFile = null;
+        fileInput.value = "";
+        selectedFileRow.style.display = "none";
+        loadStallUploadsList();
+      } catch (err) {
+        uploadResult.style.display = "block";
+        uploadResult.className = "upload-result has-errors";
+        uploadResult.innerHTML = `<strong>${escapeHtml(err.message)}</strong>`;
+      } finally {
+        uploadSubmitBtn.disabled = !selectedStallFile;
+        uploadSubmitBtn.textContent = "Upload";
+      }
+    });
+
+    loadStallUploadsList();
+  }
+
+  async function loadStallUploadsList() {
+    const area = document.getElementById("stallUploadsListArea");
+    if (!area) return;
+    try {
+      const res = await apiFetch("/api/stalls/bulk-uploads");
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Could not load upload history.");
+      if (!data.uploads || data.uploads.length === 0) {
+        area.innerHTML = '<div class="empty-state">No uploads yet.</div>';
+        return;
+      }
+      area.innerHTML = "";
+      data.uploads.forEach((u) => {
+        const card = document.createElement("div");
+        card.className = "upload-history-card";
+        const statusClass = u.failed_count > 0 ? "has-errors" : "success";
+        const statusLabel = u.failed_count > 0 ? "COMPLETED WITH ERRORS" : "COMPLETED";
+        card.innerHTML = `
+          <div class="upload-history-name">${escapeHtml(u.filename)}</div>
+          <div class="upload-history-meta">Uploaded by: ${escapeHtml(u.uploaded_by || "—")}</div>
+          <span class="upload-history-status ${statusClass}">${statusLabel}</span>
+          <div class="upload-history-meta">Date: ${escapeHtml(formatValue(u.created_at, "date"))}</div>
+          <div class="upload-history-counts">${u.success_count} imported${u.failed_count > 0 ? `, ${u.failed_count} failed` : ""} of ${u.total_rows}</div>
+          ${u.failed_count > 0 ? `<a class="upload-history-download" href="/api/stalls/bulk-uploads/${u.id}/failure-report">⬇ Failure report</a>` : ""}
+        `;
+        area.appendChild(card);
+      });
+    } catch (err) {
+      area.innerHTML = `<div class="empty-state">${escapeHtml(err.message)}</div>`;
+    }
   }
 
   // ---- Status tabs ----
@@ -828,6 +1462,7 @@
     approve: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>',
     reject: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m15 9-6 6M9 9l6 6"/></svg>',
     delete: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>',
+    allot: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>',
   };
 
   function buildRowActions(cfg, row) {
@@ -847,6 +1482,17 @@
     editBtn.innerHTML = ICONS.edit;
     editBtn.addEventListener("click", () => openEditModal(cfg, row));
     wrap.appendChild(editBtn);
+
+    // Task 4: Space Booking <-> Stall linking — only exhibitors (Space
+    // Booking) get this button; other record types don't have stalls.
+    if (currentType === "exhibitor_booking") {
+      const allotBtn = document.createElement("button");
+      allotBtn.className = "allot";
+      allotBtn.title = row.allotted_stall_number ? "Change / unallot stall" : "Allot a stall";
+      allotBtn.innerHTML = ICONS.allot;
+      allotBtn.addEventListener("click", () => openAllotStallModal(row));
+      wrap.appendChild(allotBtn);
+    }
 
     const approveBtn = document.createElement("button");
     approveBtn.className = "approve";
@@ -1020,6 +1666,142 @@
       } finally {
         editModalSave.disabled = false;
         editModalSave.textContent = "Save Changes";
+      }
+    };
+
+    editModalBackdrop.classList.add("open");
+  }
+
+  // ---- Task 4: Allot Stall modal (Space Booking row action) ----
+  // Reuses the generic edit modal shell, but with custom search-and-pick
+  // content instead of a field list — allotment isn't a plain column edit.
+  function openAllotStallModal(row) {
+    editModalError.classList.remove("show");
+    editModalError.textContent = "";
+    editModalBody.innerHTML = "";
+    document.querySelector("#editModalBackdrop h2").textContent = "Allot Stall";
+
+    let selectedStall = null; // { id, hall_number, stall_number }
+    let allotDebounce = null;
+
+    const currentWrap = document.createElement("div");
+    currentWrap.className = "allot-current";
+    currentWrap.innerHTML = row.allotted_stall_number
+      ? `Currently allotted: <strong>${escapeHtml(row.allotted_hall_number || "")} / ${escapeHtml(row.allotted_stall_number)}</strong>`
+      : `<span class="allot-none">No stall allotted yet.</span>`;
+    editModalBody.appendChild(currentWrap);
+
+    const searchField = document.createElement("div");
+    searchField.className = "edit-field";
+    const label = document.createElement("label");
+    label.textContent = "Search a vacant stall (hall or stall number)";
+    const searchInput = document.createElement("input");
+    searchInput.type = "text";
+    searchInput.placeholder = "e.g. H10 or H10-06/348";
+    searchField.appendChild(label);
+    searchField.appendChild(searchInput);
+    editModalBody.appendChild(searchField);
+
+    const resultsArea = document.createElement("div");
+    resultsArea.className = "allot-results";
+    editModalBody.appendChild(resultsArea);
+
+    async function searchVacantStalls(term) {
+      resultsArea.innerHTML = '<div class="loading-state">Searching…</div>';
+      try {
+        const params = new URLSearchParams({ status: "Vacant", pageSize: "10" });
+        if (term) params.set("search", term);
+        const res = await apiFetch(`/api/stalls?${params.toString()}`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Could not search stalls.");
+        renderStallResults(data.rows);
+      } catch (err) {
+        resultsArea.innerHTML = `<div class="empty-state">${escapeHtml(err.message)}</div>`;
+      }
+    }
+
+    function renderStallResults(stalls) {
+      if (!stalls || stalls.length === 0) {
+        resultsArea.innerHTML = '<div class="empty-state">No vacant stalls match.</div>';
+        return;
+      }
+      resultsArea.innerHTML = "";
+      stalls.forEach((s) => {
+        const item = document.createElement("button");
+        item.type = "button";
+        item.className = "allot-result-item" + (selectedStall && selectedStall.id === s.id ? " selected" : "");
+        item.innerHTML = `<span>${escapeHtml(s.hall_number)} / ${escapeHtml(s.stall_number)}</span><span class="allot-result-meta">${escapeHtml(s.floor || "")}${s.area_sqm ? ` · ${s.area_sqm} sqm` : ""}</span>`;
+        item.addEventListener("click", () => {
+          selectedStall = s;
+          resultsArea.querySelectorAll(".allot-result-item").forEach((el) => el.classList.remove("selected"));
+          item.classList.add("selected");
+        });
+        resultsArea.appendChild(item);
+      });
+    }
+
+    searchInput.addEventListener("input", () => {
+      clearTimeout(allotDebounce);
+      allotDebounce = setTimeout(() => searchVacantStalls(searchInput.value), 350);
+    });
+    searchVacantStalls("");
+
+    // Unallot button only makes sense when a stall is already assigned —
+    // added as an extra action alongside Cancel/Save rather than inside
+    // the scrolling modal body.
+    if (row.allotted_stall_number) {
+      const unallotBtn = document.createElement("button");
+      unallotBtn.type = "button";
+      unallotBtn.className = "allot-unallot-btn";
+      unallotBtn.textContent = "Unallot Current Stall";
+      unallotBtn.addEventListener("click", async () => {
+        unallotBtn.disabled = true;
+        unallotBtn.textContent = "Removing…";
+        try {
+          const res = await apiFetch(`/api/exhibitor-booking/${row.id}/unallot-stall`, { method: "POST" });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || "Could not unallot stall.");
+          closeEditModal();
+          document.querySelector("#editModalBackdrop h2").textContent = "Edit Record";
+          loadRecords();
+        } catch (err) {
+          editModalError.textContent = err.message;
+          editModalError.classList.add("show");
+        } finally {
+          unallotBtn.disabled = false;
+          unallotBtn.textContent = "Unallot Current Stall";
+        }
+      });
+      editModalBody.appendChild(unallotBtn);
+    }
+
+    editModalSave.textContent = "Allot Selected Stall";
+    editModalSave.onclick = async () => {
+      if (!selectedStall) {
+        editModalError.textContent = "Pick a vacant stall from the list first.";
+        editModalError.classList.add("show");
+        return;
+      }
+      editModalSave.disabled = true;
+      editModalSave.textContent = "Allotting…";
+      try {
+        const res = await apiFetch(`/api/exhibitor-booking/${row.id}/allot-stall`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ stallId: selectedStall.id }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Could not allot stall.");
+        closeEditModal();
+        document.querySelector("#editModalBackdrop h2").textContent = "Edit Record";
+        editModalSave.textContent = "Save Changes";
+        loadRecords();
+      } catch (err) {
+        editModalError.textContent = err.message;
+        editModalError.classList.add("show");
+      } finally {
+        editModalSave.disabled = false;
+        editModalSave.textContent = "Allot Selected Stall";
       }
     };
 
